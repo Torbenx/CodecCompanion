@@ -18,6 +18,7 @@ import com.tt.autobluetoothcodec.SampleData.aac
 import com.tt.autobluetoothcodec.SampleData.codec
 import com.tt.autobluetoothcodec.SampleData.device
 import com.tt.autobluetoothcodec.SampleData.ldac
+import com.tt.autobluetoothcodec.SampleData.saved
 import com.tt.autobluetoothcodec.SampleData.sbc
 import com.tt.autobluetoothcodec.SampleData.sony
 import com.tt.autobluetoothcodec.SampleData.state
@@ -61,6 +62,8 @@ internal object NoMainActions : MainScreenActions {
     override fun savePreferred(address: String, config: CodecConfig) {}
     override fun restorePreferred(address: String, config: CodecConfig) {}
     override fun deletePreferred(address: String) {}
+    override fun undoDelete(address: String) {}
+    override fun setPreferred(address: String, config: CodecConfig) {}
     override fun link(address: String) {}
     override fun unlink(address: String) {}
 }
@@ -79,8 +82,23 @@ internal object NoAboutActions : AboutScreenActions {
     override fun openLicenses() {}
 }
 
-private fun mainScene(name: String, state: MainScreenState, expanded: Set<String> = emptySet()) =
-    Scene(name) { AppTheme { MainScreen(state, NoMainActions, expanded) } }
+private fun mainScene(
+    name: String,
+    state: MainScreenState,
+    expanded: Set<String> = emptySet(),
+    list: DeviceList = DeviceList.CONNECTED,
+) = Scene(name) { AppTheme { MainScreen(state, NoMainActions, expanded, list) } }
+
+/** The Qudelix connected, the Sony and a car not, the car connected long ago. */
+private val savedDevices = listOf(
+    saved(connected = true),
+    saved(aac(), SampleData.SONY_NAME, SampleData.SONY_ADDRESS, SampleData.SONY_MASKS),
+    saved(sbc(), "Car", "00:00:00:00:00:06", SampleData.SONY_MASKS,
+        lastConnected = SampleData.yesterdayEvening() - 40L * 24 * 60 * 60 * 1000),
+)
+
+private fun savedScene(name: String, expanded: Set<String> = emptySet(), devices: List<SavedDeviceData> = savedDevices) =
+    mainScene(name, state(device(preferred = ldac()), savedDevices = devices), expanded, DeviceList.SAVED)
 
 private fun logScene(
     name: String,
@@ -191,6 +209,14 @@ internal val mainScreenStates = emptyStates + listOf(
         device(statusReadable = false, associationRequired = true, associated = false,
             name = "Kitchen speaker", address = "00:00:00:00:00:07"),
     )),
+    savedScene("Saved devices"),
+    savedScene("Saved, connected, expanded", setOf(ADDRESS)),
+    savedScene("Saved, not connected, expanded", setOf(SampleData.SONY_ADDRESS)),
+    savedScene("Saved, last connection unknown, long name", setOf(ADDRESS),
+        listOf(saved(name = LONG_NAME, lastConnected = null))),
+    // Bluetooth off doesn't hide the saved devices, none are connected
+    mainScene("Saved, Bluetooth off", state(bluetoothEnabled = false, savedDevices = savedDevices.map { it.copy(connected = false) }),
+        list = DeviceList.SAVED),
 )
 
 /** The log screen's other states, edge cases included. */

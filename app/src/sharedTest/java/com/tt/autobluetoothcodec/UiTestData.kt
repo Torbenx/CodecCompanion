@@ -16,6 +16,8 @@ internal object UiTestData {
         override fun savePreferred(address: String, config: CodecConfig) { calls.add("savePreferred $address ${config.describe()}") }
         override fun restorePreferred(address: String, config: CodecConfig) { calls.add("restorePreferred $address ${config.describe()}") }
         override fun deletePreferred(address: String) { calls.add("deletePreferred $address") }
+        override fun undoDelete(address: String) { calls.add("undoDelete $address") }
+        override fun setPreferred(address: String, config: CodecConfig) { calls.add("setPreferred $address ${config.describe()}") }
         override fun link(address: String) { calls.add("link $address") }
         override fun unlink(address: String) { calls.add("unlink $address") }
     }

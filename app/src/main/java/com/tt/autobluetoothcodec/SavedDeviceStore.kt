@@ -53,9 +53,10 @@ object SavedDeviceStore {
 
     // The preferred codec
 
-    fun getPreferred(context: Context, device: BluetoothDevice): CodecConfig? = getPreferred(context, key(device))
+    fun getPreferred(context: Context, device: BluetoothDevice): CodecConfig? = getPreferred(context, device.address)
 
-    private fun getPreferred(context: Context, key: String): CodecConfig? {
+    fun getPreferred(context: Context, address: String): CodecConfig? {
+        val key = address.uppercase()
         val text = preferred(context).getString(key, null) ?: return null
         return try {
             CodecConfig.fromAndroid(json.decodeFromString<AndroidCodecConfig>(text))

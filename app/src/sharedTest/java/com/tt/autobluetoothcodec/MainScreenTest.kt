@@ -4,7 +4,9 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasNoClickAction
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -13,11 +15,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.tt.autobluetoothcodec.SampleData.ADDRESS
 import com.tt.autobluetoothcodec.SampleData.NAME
 import com.tt.autobluetoothcodec.SampleData.codec
 import com.tt.autobluetoothcodec.SampleData.device
 import com.tt.autobluetoothcodec.SampleData.ldac
+import com.tt.autobluetoothcodec.SampleData.saved
 import com.tt.autobluetoothcodec.SampleData.state
 import com.tt.autobluetoothcodec.UiTestData.RecordingActions
 import org.junit.Assert.assertEquals
@@ -128,12 +132,13 @@ class MainScreenTest {
     }
 
     @Test
-    fun withSavedDevicesTheSavedListHasNoEmptyState() {
+    fun withSavedDevicesTheSavedListShowsThem() {
         show(state(device(preferred = ldac())))
         compose.onNodeWithTag("list_toggle").performClick()
         compose.onNodeWithTag("list_saved").performClick()
         text("Saved devices").assertExists()
         text("Codec has no saved devices yet").assertDoesNotExist()
+        compose.onNodeWithTag("saved_$ADDRESS").assertExists()
     }
 
     // The top bar
@@ -152,7 +157,7 @@ class MainScreenTest {
     }
 
     @Test
-    fun theSavedListIsEmptyForNow() {
+    fun theSwitchShowsEitherList() {
         show(device())
         compose.onNodeWithTag("list_toggle").performClick()
         compose.onNodeWithTag("list_saved").performClick()
@@ -180,6 +185,116 @@ class MainScreenTest {
         compose.onNodeWithTag("list_connected").performClick()
         compose.waitForIdle()
         text("Codec").assertExists()
+    }
+
+    // The Saved devices list
+
+    private fun showSaved(vararg saved: SavedDeviceData, devices: List<DeviceData> = emptyList(),
+                          permissionState: PermissionState = PermissionState.GRANTED, bluetoothEnabled: Boolean = true) =
+        compose.setContent {
+            MainScreen(
+                state(*devices.toTypedArray(), savedDevices = saved.toList(), permissionState = permissionState,
+                    bluetoothEnabled = bluetoothEnabled),
+                actions,
+                initialList = DeviceList.SAVED
+            )
+        }
+
+    private val sonySaved = saved(SampleData.aac(), SampleData.SONY_NAME, SampleData.SONY_ADDRESS, SampleData.SONY_MASKS)
+
+    @Test
+    fun savedDevicesShowTheirPreferredCodecAndWhetherTheyreConnected() {
+        showSaved(saved(connected = true), sonySaved)
+        text(NAME).assertExists()
+        text(SampleData.SONY_NAME).assertExists()
+        text("LDAC").assertExists()
+        text("AAC").assertExists()
+        compose.onAllNodesWithTag("connected_chip", useUnmergedTree = true).assertCountEquals(1)
+    }
+
+    @Test
+    fun aDisconnectedDeviceSaysWhenItWasLastConnected() {
+        val device = saved()
+        showSaved(device)
+        expand()
+        text("Not connected").assertExists()
+        // LastConnectedTextTest checks the wording, the clocks of the test and the screen may differ
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        text("Last connected: " + lastConnectedText(context, device.lastConnected!!)).assertExists()
+        compose.onNodeWithTag("view_device").assertDoesNotExist()
+    }
+
+    @Test
+    fun withoutALastConnectionTheBannerSaysSo() {
+        showSaved(saved(lastConnected = null))
+        expand()
+        text("Not connected since it was saved").assertExists()
+    }
+
+    @Test
+    fun deletingADisconnectedDeviceCanBeUndone() {
+        showSaved(saved())
+        expand()
+        action("delete_saved").performClick()
+        compose.waitForIdle()
+        text("$NAME deleted").assertExists()
+        text("Undo").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf("deletePreferred $ADDRESS", "undoDelete $ADDRESS"), actions.calls)
+    }
+
+    @Test
+    fun viewingAConnectedDeviceShowsItsExpandedCard() {
+        showSaved(saved(connected = true), devices = listOf(device(preferred = ldac())))
+        expand()
+        text("Connected").assertExists()
+        compose.onNodeWithTag("delete_saved").assertDoesNotExist()
+        action("view_device").performClick()
+        compose.mainClock.advanceTimeBy(1000)
+        compose.waitForIdle()
+        text("Connected devices").assertExists()
+        compose.onNodeWithTag("saved_$ADDRESS").assertDoesNotExist()
+        compose.onNodeWithTag("device_$ADDRESS").assertExists()
+        compose.onNodeWithTag("preferred_banner", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun choosingAValueChangesThePreferredCodec() {
+        showSaved(saved())
+        expand()
+        chip("48000 Hz").performClick()
+        // Already the preferred codec
+        chip("LDAC").performClick()
+        chip("AAC").performClick()
+        assertEquals(listOf(
+            "setPreferred $ADDRESS " + ldac(CodecConfig.SAMPLE_RATE_48000).describe(),
+            "setPreferred $ADDRESS " + SampleData.aac().describe(),
+        ), actions.calls)
+    }
+
+    @Test
+    fun valuesTheDeviceDidntOfferAreDisabled() {
+        showSaved(sonySaved)
+        text(SampleData.SONY_NAME).performClick()
+        compose.waitForIdle()
+        chip("aptX").assertIsNotEnabled()
+        chip("LDAC").assertIsEnabled()
+        chip("48000 Hz").assertIsEnabled()
+        chip("96000 Hz").assertIsNotEnabled()
+    }
+
+    @Test
+    fun withoutThePermissionTheSavedListAsksForIt() {
+        showSaved(saved(), permissionState = PermissionState.DENIED)
+        text("Codec needs your permission").assertExists()
+        text(NAME).assertDoesNotExist()
+    }
+
+    @Test
+    fun withBluetoothOffTheSavedDevicesStillShow() {
+        showSaved(saved(), bluetoothEnabled = false)
+        text(NAME).assertExists()
+        text("Codec is asleep").assertDoesNotExist()
     }
 
     // V2

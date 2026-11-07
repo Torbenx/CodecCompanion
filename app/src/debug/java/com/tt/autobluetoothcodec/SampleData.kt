@@ -95,9 +95,26 @@ internal object SampleData {
         showDevelopmentOptions: Boolean = false,
         bluetoothEnabled: Boolean = true,
         devicesKnown: Boolean = true,
-        hasSavedDevices: Boolean = devices.any { it.preferredConfig != null },
+        // By default the connected devices with a preferred codec
+        savedDevices: List<SavedDeviceData> = devices.mapNotNull { device ->
+            device.preferredConfig?.let { saved(it, device.name, device.address, device.configMasks, connected = true) }
+        },
     ) = MainScreenState(permissionState, devices.toList(), canAssociate, linkingAddress, showDevelopmentOptions,
-        bluetoothEnabled, devicesKnown, hasSavedDevices)
+        bluetoothEnabled, devicesKnown, savedDevices)
+
+    /** Yesterday at 18:42, relative to the clock the screen reads. */
+    fun yesterdayEvening(): Long =
+        LocalDate.now().minusDays(1).atTime(18, 42).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    /** A saved device, by default the Qudelix with its preferred codec, last connected yesterday evening. */
+    fun saved(
+        preferred: CodecConfig = ldac(),
+        name: String = NAME,
+        address: String = ADDRESS,
+        masks: List<A2dpProfileUtil.ConfigMask> = QUDELIX_MASKS,
+        lastConnected: Long? = yesterdayEvening(),
+        connected: Boolean = false,
+    ) = SavedDeviceData(address, name, preferred, masks, lastConnected, connected)
 
     val TODAY: LocalDate = LocalDate.of(2026, 10, 27)
 

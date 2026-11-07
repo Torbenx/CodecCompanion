@@ -22,6 +22,20 @@ import android.os.Handler
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
+import android.text.format.DateUtils
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.delay
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
@@ -54,6 +68,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -136,6 +151,18 @@ internal data class DeviceData(
     val shownConfig: CodecConfig? get() = targetConfig?.withSystemChoices(codecConfig) ?: codecConfig
 }
 
+/** A saved device as the Saved devices list shows it, see [SavedDeviceStore]. */
+internal data class SavedDeviceData(
+    val address: String,
+    val name: String,
+    val preferredConfig: CodecConfig,
+    // The values it offered when it was last read, empty if they never were
+    val capabilities: List<A2dpProfileUtil.ConfigMask>,
+    // Milliseconds since the epoch, null if unknown
+    val lastConnected: Long?,
+    val connected: Boolean,
+)
+
 /** Everything the main screen shows, provided by [MainActivity]. */
 internal data class MainScreenState(
     val permissionState: PermissionState,
@@ -147,7 +174,8 @@ internal data class MainScreenState(
     val bluetoothEnabled: Boolean,
     // Whether empty devices mean none are connected, right after Bluetooth turned on the profile isn't connected yet
     val devicesKnown: Boolean,
-    val hasSavedDevices: Boolean,
+    // The connected ones first, then by when they were last connected
+    val savedDevices: List<SavedDeviceData>,
 )
 
 /** What the main screen's controls do, implemented by [MainActivity]. */
@@ -162,6 +190,10 @@ internal interface MainScreenActions {
     fun savePreferred(address: String, config: CodecConfig)
     fun restorePreferred(address: String, config: CodecConfig)
     fun deletePreferred(address: String)
+    /** Saves the device again as it was before [deletePreferred], unless it was saved again meanwhile. */
+    fun undoDelete(address: String)
+    /** Changes the preferred codec of a saved device, connected or not, without applying it. */
+    fun setPreferred(address: String, config: CodecConfig)
     fun link(address: String)
     fun unlink(address: String)
 }
@@ -216,6 +248,8 @@ class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
         override fun savePreferred(address: String, config: CodecConfig) = savePreferredConfig(remoteDevice(address), config)
         override fun restorePreferred(address: String, config: CodecConfig) = restorePreferredConfig(remoteDevice(address), config)
         override fun deletePreferred(address: String) = deletePreferredConfig(remoteDevice(address))
+        override fun undoDelete(address: String) = undoDeletePreferred(remoteDevice(address))
+        override fun setPreferred(address: String, config: CodecConfig) = changePreferredConfig(remoteDevice(address), config)
         override fun link(address: String) = linkDevice(remoteDevice(address))
         override fun unlink(address: String) = unlinkDevice(remoteDevice(address))
     }
@@ -280,7 +314,7 @@ class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
                         showDevelopmentOptions = showDevelopmentOptions,
                         bluetoothEnabled = bluetoothEnabled,
                         devicesKnown = devicesKnown,
-                        hasSavedDevices = hasSavedDevices
+                        savedDevices = savedDevices
                     ),
                     actions
                 )
@@ -527,10 +561,36 @@ class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
         pullBluetoothState()
     }
 
+    /** Changes the preferred codec from the Saved devices list. The device was linked when it was saved. */
+    private fun changePreferredConfig(device: BluetoothDevice, config: CodecConfig) {
+        if (SavedDeviceStore.getPreferred(this, device) == null)
+            return
+        val operation = log.begin(EventType.USER_SAVE_PREFERRED, LogDevice.of(device), LogCodecConfig.of(config),
+            message = "saved devices")
+        SavedDeviceStore.setPreferred(this, device, config)
+        operation.resolve(EventType.PREFERRED_SAVED)
+        pullBluetoothState()
+    }
+
+    // What deleting removed, by upper case address, for undoing it while the activity lives
+    private val deletedDevices = HashMap<String, SavedDeviceStore.Entry>()
+
     private fun deletePreferredConfig(device: BluetoothDevice) {
         val config = SavedDeviceStore.getPreferred(this, device)
-        SavedDeviceStore.remove(this, device)
+        SavedDeviceStore.remove(this, device)?.let { deletedDevices[device.address.uppercase()] = it }
         log.log(EventType.PREFERRED_DELETED, LogDevice.of(device), config = config?.let { LogCodecConfig.of(it) })
+        CompanionPresence.update(this, device)
+        pullBluetoothState()
+    }
+
+    private fun undoDeletePreferred(device: BluetoothDevice) {
+        val entry = deletedDevices.remove(device.address.uppercase()) ?: return
+        if (SavedDeviceStore.getPreferred(this, device) != null)
+            return
+        SavedDeviceStore.restore(this, device, entry)
+        val config = SavedDeviceStore.getPreferred(this, device)
+        log.begin(EventType.USER_SAVE_PREFERRED, LogDevice.of(device), config?.let { LogCodecConfig.of(it) },
+            message = "undo delete").resolve(EventType.PREFERRED_SAVED)
         CompanionPresence.update(this, device)
         pullBluetoothState()
     }
@@ -550,30 +610,45 @@ class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
     private var connectedDevices by mutableStateOf(emptyList<DeviceData>())
     private var bluetoothEnabled by mutableStateOf(true)
     private var devicesKnown by mutableStateOf(false)
-    private var hasSavedDevices by mutableStateOf(false)
+    private var savedDevices by mutableStateOf(emptyList<SavedDeviceData>())
     private var profileWaitPolls = 0
 
     private fun pullBluetoothState() {
         val profile = a2dpProfile
         bluetoothEnabled = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
-        hasSavedDevices = SavedDeviceStore.hasAny(this)
         profileWaitPolls = if (profile != null || !bluetoothEnabled) 0 else profileWaitPolls + 1
         devicesKnown = profile != null || profileWaitPolls > PROFILE_WAIT_POLLS
         if (profile == null) {
             connectedDevices = emptyList()
-            return
+        } else {
+            val devices = try {
+                profile.connectedDevices
+            } catch (e: SecurityException) {
+                Log.w(TAG, "not allowed to list connected devices", e)
+                emptyList()
+            }
+            connectedDevices = devices.map { readDeviceData(profile, it) }
+            for ((device, data) in devices.zip(connectedDevices)) {
+                logObservedCodec(device, data)
+                updateSavedInfo(device, data)
+            }
         }
-        val devices = try {
-            profile.connectedDevices
-        } catch (e: SecurityException) {
-            Log.w(TAG, "not allowed to list connected devices", e)
-            emptyList()
-        }
-        connectedDevices = devices.map { readDeviceData(profile, it) }
-        for ((device, data) in devices.zip(connectedDevices)) {
-            logObservedCodec(device, data)
-            updateSavedInfo(device, data)
-        }
+        savedDevices = readSavedDevices()
+    }
+
+    /** The saved devices, the connected ones first, then the most recently connected. */
+    private fun readSavedDevices(): List<SavedDeviceData> {
+        val connected = connectedDevices.mapTo(HashSet()) { it.address.uppercase() }
+        return SavedDeviceStore.addresses(this).mapNotNull { address ->
+            val preferred = SavedDeviceStore.getPreferred(this, address) ?: return@mapNotNull null
+            val info = SavedDeviceStore.getInfo(this, address) ?: return@mapNotNull null
+            SavedDeviceData(address, info.name ?: address, preferred, info.capabilities, info.lastConnected,
+                connected = address in connected)
+        }.sortedWith(
+            compareByDescending<SavedDeviceData> { it.connected }
+                .thenByDescending { it.lastConnected ?: 0 }
+                .thenBy { it.name }
+        )
     }
 
     /** Keeps the name and the offered values of a saved device as they're read, the store only writes changes. */
@@ -758,19 +833,22 @@ private fun PreferredContent(label: String, icon: ImageVector) {
     }
 }
 
-/** What the preferred codec's banner offers: Restore while it differs from the codec, Delete while it's active. */
+/**
+ * What a banner offers. The preferred codec's: Restore while it differs from the codec, Delete while it's active. A
+ * saved device's: View device while it's connected, Delete otherwise.
+ */
 private enum class BannerAction(val label: String, val icon: ImageVector, val tag: String) {
     RESTORE("Restore", Icons.Default.Refresh, "restore_preferred"),
     DELETE("Delete", Icons.Default.Delete, "clear_preferred"),
+    VIEW_DEVICE("View device", Icons.AutoMirrored.Filled.ArrowForward, "view_device"),
+    DELETE_SAVED("Delete", Icons.Default.Delete, "delete_saved"),
 }
 
 /**
  * Tops the expanded card with the preferred codec as text: in the collapsed card's Preferred chip green with Delete
  * while it's active, otherwise a step darker than the card, with Restore while it differs, or what Save below the
  * codec does while nothing is saved. A codec this app doesn't know can't be saved, so the card leaves the banner out
- * when there's no preferred one either. The button is outlined and uncolored, so it doesn't compete with the chips or Save. It sits beside the
- * title and the codec, centered on both, if the title fits next to it, where a long codec wraps instead of moving the
- * button. Otherwise it's below the codec, so the title never wraps mid-word.
+ * when there's no preferred one either.
  */
 @Composable
 private fun PreferredBanner(device: DeviceData, actions: MainScreenActions) {
@@ -783,20 +861,51 @@ private fun PreferredBanner(device: DeviceData, actions: MainScreenActions) {
         else -> BannerAction.RESTORE
     }
     val scheme = MaterialTheme.colorScheme
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = if (active) AppColors.status.preferredContainer else scheme.surfaceContainerHighest,
-        contentColor = if (active) AppColors.status.onPreferredContainer else scheme.onSurface,
-        modifier = Modifier.fillMaxWidth().testTag("preferred_banner")
-    ) {
-        val iconSize = preferredIconSize()
-        val title = when {
+    ActionBanner(
+        icon = if (active) Icons.Default.Check else Icons.Default.Star,
+        title = when {
             preferred == null -> "No preferred codec"
             active -> "Preferred codec is active"
             else -> "Preferred codec"
-        }
-        val icon = if (active) Icons.Default.Check else Icons.Default.Star
-        val description = preferred?.describe() ?: "Save the codec below to switch to it whenever this device connects."
+        },
+        description = preferred?.describe() ?: "Save the codec below to switch to it whenever this device connects.",
+        action = action,
+        onAction = {
+            when (action) {
+                BannerAction.RESTORE -> preferred?.let { actions.restorePreferred(device.address, it) }
+                else -> actions.deletePreferred(device.address)
+            }
+        },
+        color = if (active) AppColors.status.preferredContainer else scheme.surfaceContainerHighest,
+        contentColor = if (active) AppColors.status.onPreferredContainer else scheme.onSurface,
+        tag = "preferred_banner"
+    )
+}
+
+/**
+ * A banner with an icon, a title, a description below and an [action]. The button is outlined and uncolored, so it
+ * doesn't compete with the chips or Save. It sits beside the title and the description, centered on both, if the title
+ * fits next to it, where a long description wraps instead of moving the button. Otherwise it's below the description,
+ * so the title never wraps mid-word.
+ */
+@Composable
+private fun ActionBanner(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    action: BannerAction?,
+    onAction: () -> Unit,
+    color: Color,
+    contentColor: Color,
+    tag: String,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = color,
+        contentColor = contentColor,
+        modifier = Modifier.fillMaxWidth().testTag(tag)
+    ) {
+        val iconSize = preferredIconSize()
         // With the button's 48 dp touch target around its 40 dp, this puts both the button and the text, with its own
         // 4 dp, 12 dp from the banner's edge
         BoxWithConstraints(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
@@ -810,17 +919,17 @@ private fun PreferredBanner(device: DeviceData, actions: MainScreenActions) {
                 iconSize + 12.dp + width(title, MaterialTheme.typography.titleSmall) + 8.dp + button <= maxWidth
             if (beside) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    PreferredBannerText(icon, title, description, Modifier.weight(1f))
+                    BannerText(icon, title, description, Modifier.weight(1f))
                     Spacer(Modifier.width(8.dp))
-                    BannerButton(device, action, actions)
+                    BannerButton(action, onAction)
                 }
             } else {
                 Column {
-                    PreferredBannerText(icon, title, description)
+                    BannerText(icon, title, description)
                     if (action != null) {
                         Spacer(Modifier.height(4.dp))
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                            BannerButton(device, action, actions)
+                            BannerButton(action, onAction)
                         }
                     }
                 }
@@ -829,9 +938,9 @@ private fun PreferredBanner(device: DeviceData, actions: MainScreenActions) {
     }
 }
 
-/** The banner's icon and title, with its codec or explanation below the title. */
+/** The banner's icon and title, with its description below the title. */
 @Composable
-private fun PreferredBannerText(icon: ImageVector, title: String, description: String, modifier: Modifier = Modifier) {
+private fun BannerText(icon: ImageVector, title: String, description: String, modifier: Modifier = Modifier) {
     val iconSize = preferredIconSize()
     Column(modifier.padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -846,14 +955,9 @@ private fun PreferredBannerText(icon: ImageVector, title: String, description: S
 
 /** The banner's uncolored outlined button. */
 @Composable
-private fun BannerButton(device: DeviceData, action: BannerAction, actions: MainScreenActions) {
+private fun BannerButton(action: BannerAction, onAction: () -> Unit) {
     Surface(
-        onClick = {
-            when (action) {
-                BannerAction.RESTORE -> device.preferredConfig?.let { actions.restorePreferred(device.address, it) }
-                BannerAction.DELETE -> actions.deletePreferred(device.address)
-            }
-        },
+        onClick = onAction,
         shape = CircleShape,
         color = Color.Transparent,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -1179,8 +1283,8 @@ private fun ConfigValueChips(config: CodecConfig, pending: PendingRows?) {
 /** A device's card, expanded or collapsed as the list keeps it, so it stays that way while the other list shows. */
 @Composable
 private fun DeviceCard(device: DeviceData, extended: Boolean, onToggle: () -> Unit, state: MainScreenState,
-                       actions: MainScreenActions) {
-    val modifier = Modifier.fillMaxWidth().padding(16.dp).testTag(deviceTag(device))
+                       actions: MainScreenActions, modifier: Modifier = Modifier) {
+    val cardModifier = modifier.fillMaxWidth().padding(16.dp).testTag(deviceTag(device))
     val content = @Composable {
         Column(modifier = Modifier.padding(10.dp)) {
             // The name has the header to itself, the preferred codec is below the codec
@@ -1235,17 +1339,143 @@ private fun DeviceCard(device: DeviceData, extended: Boolean, onToggle: () -> Un
     if (device.statusReadable) {
         Surface(
             onClick = onToggle,
-            modifier = modifier,
+            modifier = cardModifier,
             color = color,
             shadowElevation = 6.dp,
             shape = CardDefaults.elevatedShape,
             content = content
         )
     } else {
-        Surface(modifier = modifier, color = color, shadowElevation = 6.dp, shape = CardDefaults.elevatedShape,
+        Surface(modifier = cardModifier, color = color, shadowElevation = 6.dp, shape = CardDefaults.elevatedShape,
             content = content)
     }
 }
+
+/**
+ * A saved device's card. Collapsed it shows the preferred codec, and a Connected chip while the device is connected.
+ * Expanded, a banner says whether it's connected, offering to view it in the Connected devices list or to delete it,
+ * above the chips that change the preferred codec right away, from the values the device offered when it was last read.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SavedDeviceCard(
+    device: SavedDeviceData,
+    extended: Boolean,
+    onToggle: () -> Unit,
+    onView: () -> Unit,
+    onDelete: () -> Unit,
+    actions: MainScreenActions,
+) {
+    Surface(
+        onClick = onToggle,
+        modifier = Modifier.fillMaxWidth().padding(16.dp).testTag(savedTag(device)),
+        // Material's elevated card color, like the connected devices' cards
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shadowElevation = 6.dp,
+        shape = CardDefaults.elevatedShape
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(
+                    device.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            AnimatedVisibility(!extended) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    ConfigValueChips(device.preferredConfig, pending = null)
+                    if (device.connected)
+                        ConnectedChip()
+                }
+            }
+            AnimatedVisibility(extended) {
+                Column {
+                    SavedBanner(device, onView, onDelete)
+                    Spacer(Modifier.height(16.dp))
+                    CodecConfigSelection(
+                        device.preferredConfig,
+                        android = null,
+                        device.capabilities,
+                        PendingRows(null, null),
+                        onConfigChange = {
+                            if (it != device.preferredConfig)
+                                actions.setPreferred(device.address, it)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The chip after a saved device's codec while it's connected. Neutral, since being connected is neither the preferred
+ * codec's green nor needs attention like the amber of a missing link.
+ */
+@Composable
+private fun ConnectedChip() {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag("connected_chip")
+    ) {
+        Row(
+            Modifier.padding(start = 10.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(ImageVector.vectorResource(R.drawable.ic_headset), contentDescription = null,
+                modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Connected", style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+/**
+ * Tops a saved device's expanded card, a step darker than the card: while it's connected with View device, which
+ * shows its card in the Connected devices list, otherwise with when it was last connected and Delete.
+ */
+@Composable
+private fun SavedBanner(device: SavedDeviceData, onView: () -> Unit, onDelete: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    if (device.connected) {
+        ActionBanner(
+            icon = ImageVector.vectorResource(R.drawable.ic_headset),
+            title = "Connected",
+            description = "Changes here apply the next time it connects. View it to change the codec now.",
+            action = BannerAction.VIEW_DEVICE,
+            onAction = onView,
+            color = scheme.surfaceContainerHighest,
+            contentColor = scheme.onSurface,
+            tag = "saved_banner"
+        )
+    } else {
+        val context = LocalContext.current
+        ActionBanner(
+            icon = ImageVector.vectorResource(R.drawable.ic_schedule),
+            title = "Not connected",
+            description = device.lastConnected?.let { "Last connected: " + lastConnectedText(context, it) }
+                ?: "Not connected since it was saved",
+            action = BannerAction.DELETE_SAVED,
+            onAction = onDelete,
+            color = scheme.surfaceContainerHighest,
+            contentColor = scheme.onSurface,
+            tag = "saved_banner"
+        )
+    }
+}
+
+/** For example "Yesterday, 18:42", "3 days ago, 14:32" or "Nov 3, 14:32", in the app's locale, see [AppLocale]. */
+internal fun lastConnectedText(context: Context, millis: Long): String =
+    DateUtils.getRelativeDateTimeString(context, millis, DateUtils.DAY_IN_MILLIS, DateUtils.WEEK_IN_MILLIS, 0).toString()
 
 /** The device's menu, only in debug builds, for unlinking a linked device. */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -1434,39 +1664,90 @@ private fun Set<String>.toggled(address: String) = if (address in this) this - a
 /** The test tag of a device's card. */
 internal fun deviceTag(device: DeviceData) = "device_" + device.address.uppercase()
 
+/** The test tag of a saved device's card. */
+internal fun savedTag(device: SavedDeviceData) = "saved_" + device.address.uppercase()
+
 /** Keeps a set of addresses across the activity being recreated. */
 private val AddressSetSaver = listSaver<MutableState<Set<String>>, String>(
     save = { it.value.toList() },
     restore = { mutableStateOf(it.toSet()) }
 )
 
+/** How long a card takes to expand, after which View device brings it into view once more. */
+private const val EXPAND_MILLIS = 400L
+
 /**
- * The main screen: the connected devices with their codecs, or the saved devices, which are still to come, or an empty
- * state with a way out. The cards start collapsed, except those of the devices in [initiallyExpanded], by address, for
- * the previews. Each list keeps which cards are expanded and how far it's scrolled while the other one shows.
+ * The main screen: the connected devices with their codecs, or the saved devices with their preferred codecs, or an
+ * empty state with a way out. The cards start collapsed, except those of the devices in [initiallyExpanded], by
+ * address, for the previews, which can start with [initialList] as well. Each list keeps which cards are expanded and
+ * how far it's scrolled while the other one shows.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
-internal fun MainScreen(state: MainScreenState, actions: MainScreenActions, initiallyExpanded: Set<String> = emptySet()) {
-    var list by rememberSaveable { mutableStateOf(DeviceList.CONNECTED) }
+internal fun MainScreen(
+    state: MainScreenState,
+    actions: MainScreenActions,
+    initiallyExpanded: Set<String> = emptySet(),
+    initialList: DeviceList = DeviceList.CONNECTED,
+) {
+    var list by rememberSaveable { mutableStateOf(initialList) }
     var connectedExpanded by rememberSaveable(saver = AddressSetSaver) { mutableStateOf(initiallyExpanded) }
+    var savedExpanded by rememberSaveable(saver = AddressSetSaver) { mutableStateOf(initiallyExpanded) }
     val connectedScroll = rememberScrollState()
+    val savedScroll = rememberScrollState()
+    // The connected device whose card View device asked to show, until it's in view
+    var revealAddress by rememberSaveable { mutableStateOf<String?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     Scaffold(
         // Lets UiAutomator find the elements by their test tags
         modifier = Modifier.semantics { testTagsAsResourceId = true }.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = { MainTopBar(list, { list = it }, scrollBehavior, actions) },
+        topBar = {
+            MainTopBar(list, {
+                list = it
+                revealAddress = null
+            }, scrollBehavior, actions)
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         // Also keeps the content clear of display cutouts in landscape
         contentWindowInsets = WindowInsets.safeDrawing
     ) { innerPadding ->
         when {
-            // With saved devices it stays empty until their list is designed
-            list == DeviceList.SAVED -> if (!state.hasSavedDevices) {
+            list == DeviceList.SAVED && state.savedDevices.isEmpty() ->
                 EmptyState(DogScene.TOY_BOX, "Codec has no saved devices yet", "Show connected devices",
                     { list = DeviceList.CONNECTED }, innerPadding)
-            }
+            // Without it the saved devices' connections are unknown
             state.permissionState != PermissionState.GRANTED ->
                 PermissionRequired(innerPadding, state.permissionState, actions)
+            list == DeviceList.SAVED ->
+                DeviceColumn(savedScroll, innerPadding) {
+                    for (device in state.savedDevices) key(device.address) {
+                        SavedDeviceCard(
+                            device,
+                            extended = device.address in savedExpanded,
+                            onToggle = { savedExpanded = savedExpanded.toggled(device.address) },
+                            onView = {
+                                val address = state.devices.firstOrNull { it.address.equals(device.address, ignoreCase = true) }
+                                    ?.address ?: device.address
+                                connectedExpanded = connectedExpanded + address
+                                revealAddress = address
+                                list = DeviceList.CONNECTED
+                            },
+                            onDelete = {
+                                actions.deletePreferred(device.address)
+                                scope.launch {
+                                    snackbarHostState.currentSnackbarData?.dismiss()
+                                    val result = snackbarHostState.showSnackbar("${device.name} deleted", "Undo",
+                                        duration = SnackbarDuration.Short)
+                                    if (result == SnackbarResult.ActionPerformed)
+                                        actions.undoDelete(device.address)
+                                }
+                            },
+                            actions
+                        )
+                    }
+                }
             !state.bluetoothEnabled ->
                 EmptyState(DogScene.ASLEEP, "Codec is asleep", "Turn on Bluetooth", actions::enableBluetooth, innerPadding,
                     listOf("Bluetooth is off"))
@@ -1476,24 +1757,42 @@ internal fun MainScreen(state: MainScreenState, actions: MainScreenActions, init
                     actions::openBluetoothSettings, innerPadding)
             }
             else ->
-                CappedContent(NARROW_CONTENT, tintSides = false) { side ->
-                    // Padding inside the scroll container, so the cards scroll behind the navigation bar
-                    Column(
-                        Modifier.fillMaxSize().verticalScroll(connectedScroll).padding(innerPadding)
-                            .padding(horizontal = side)
-                    ) {
-                        // Keyed, so each card keeps its own state
-                        for (device in state.devices) key(device.address) {
-                            DeviceCard(
-                                device,
-                                extended = device.address in connectedExpanded,
-                                onToggle = { connectedExpanded = connectedExpanded.toggled(device.address) },
-                                state,
-                                actions
-                            )
+                DeviceColumn(connectedScroll, innerPadding) {
+                    for (device in state.devices) key(device.address) {
+                        val requester = remember { BringIntoViewRequester() }
+                        if (revealAddress == device.address) {
+                            LaunchedEffect(Unit) {
+                                // Once it's laid out, and again once it's expanded
+                                withFrameNanos {}
+                                requester.bringIntoView()
+                                delay(EXPAND_MILLIS)
+                                requester.bringIntoView()
+                                revealAddress = null
+                            }
                         }
+                        DeviceCard(
+                            device,
+                            extended = device.address in connectedExpanded,
+                            onToggle = { connectedExpanded = connectedExpanded.toggled(device.address) },
+                            state,
+                            actions,
+                            Modifier.bringIntoViewRequester(requester)
+                        )
                     }
                 }
+        }
+    }
+}
+
+/** A list's cards, as wide as the screen up to a cap, scrolled by [scroll]. */
+@Composable
+private fun DeviceColumn(scroll: ScrollState, innerPadding: PaddingValues, content: @Composable () -> Unit) {
+    CappedContent(NARROW_CONTENT, tintSides = false) { side ->
+        // Padding inside the scroll container, so the cards scroll behind the navigation bar
+        Column(
+            Modifier.fillMaxSize().verticalScroll(scroll).padding(innerPadding).padding(horizontal = side)
+        ) {
+            content()
         }
     }
 }
