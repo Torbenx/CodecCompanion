@@ -15,8 +15,8 @@ import java.util.Locale
  * Android has no data for English in that region, it falls back to English's own formats.
  *
  * Android only has per-app languages since API 33, and AndroidX only backports them for AppCompat activities, so the
- * locale is applied by hand on every API level: [CodecApplication] sets the process's default, which formatters like
- * DateUtils and java.time use, and [AppActivity] the configuration of each activity, which Compose uses.
+ * locale is applied by hand on every API level: [CodecApplication] and [AppActivity] set the process's default, which
+ * formatters like DateUtils and java.time use, and [AppActivity] the configuration of each activity, which Compose uses.
  */
 object AppLocale {
     /** English with the region and Unicode extensions of [system]. */
@@ -42,7 +42,7 @@ object AppLocale {
 
 /**
  * The app's process, which applies [AppLocale] to formatters. The system sets the default locale to its own whenever the
- * configuration changes, before calling [onConfigurationChanged].
+ * configuration changes, before calling [onConfigurationChanged], and when it launches an activity, see [AppActivity].
  */
 class CodecApplication : Application() {
     override fun onCreate() {
@@ -56,10 +56,20 @@ class CodecApplication : Application() {
     }
 }
 
-/** An activity in [AppLocale]. A change of the system's locale recreates it, which applies the new one. */
+/**
+ * An activity in [AppLocale]. A change of the system's locale recreates it, which applies the new one. Launching an
+ * activity sets the process's default locale back to the system's without telling the application, on the S24 with
+ * API 37 at least, so each activity applies it again once it's attached.
+ */
 abstract class AppActivity : ComponentActivity() {
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(newBase)
         applyOverrideConfiguration(AppLocale.overrideConfiguration())
+        AppLocale.applyDefault()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        AppLocale.applyDefault()
     }
 }
