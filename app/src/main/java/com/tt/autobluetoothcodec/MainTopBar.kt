@@ -116,7 +116,7 @@ private fun ListToggle(list: DeviceList, open: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** Segmented buttons between the lists, without the check and in the codec chips' colors. */
+/** Segmented buttons between the lists, without the check and in the tonal buttons' colors, like Save. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ListSwitch(list: DeviceList, onList: (DeviceList) -> Unit) {
@@ -130,7 +130,7 @@ private fun ListSwitch(list: DeviceList, onList: (DeviceList) -> Unit) {
                 onClick = { onList(entry) },
                 shape = SegmentedButtonDefaults.itemShape(entry.ordinal, DeviceList.entries.size),
                 colors = SegmentedButtonDefaults.colors(
-                    activeContainerColor = scheme.inversePrimary,
+                    activeContainerColor = scheme.primaryContainer,
                     activeContentColor = scheme.onPrimaryContainer,
                 ),
                 icon = {},
