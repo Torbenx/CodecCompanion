@@ -17,12 +17,12 @@ class CodecConfigSerializationTest {
 
     @Test
     fun preferredCodecStore_readsFormatWrittenWithOrgJson() {
-        // What PreferredCodecStore wrote before it used kotlinx.serialization
+        // What SavedDeviceStore wrote, as PreferredCodecStore, before it used kotlinx.serialization
         val stored = """{"codecType":4,"sampleRate":8,"bitsPerSample":2,"codecSpecific1":13,""" +
                 """"codecSpecific2":0,"codecSpecific3":0,"codecSpecific4":0}"""
-        val config = PreferredCodecStore.json.decodeFromString<AndroidCodecConfig>(stored)
+        val config = SavedDeviceStore.json.decodeFromString<AndroidCodecConfig>(stored)
         assertEquals(AndroidCodecConfig(4, 8, 2, 13, 0, 0, 0), config)
-        assertEquals(stored, PreferredCodecStore.json.encodeToString(config))
+        assertEquals(stored, SavedDeviceStore.json.encodeToString(config))
     }
 
     @Test

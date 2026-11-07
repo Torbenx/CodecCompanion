@@ -46,7 +46,7 @@ class DirectBootTest {
         context.applicationInfo.flags = context.applicationInfo.flags or ApplicationInfo.FLAG_DEBUGGABLE
         setUserUnlocked(true)
         EventLog.resetForTest(context)
-        PreferredCodecStore.clearForTest(context)
+        SavedDeviceStore.clearForTest(context)
     }
 
     /** Starts the process again before the user unlocks, as after a reboot. */
@@ -372,10 +372,10 @@ class DirectBootTest {
 
     @Test
     fun preferredCodecsAreInDeviceProtectedStorage() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         assertNotNull(deviceContext.getSharedPreferences("preferred_codecs", Context.MODE_PRIVATE).getString(ADDRESS, null))
         assertNull(context.getSharedPreferences("preferred_codecs", Context.MODE_PRIVATE).getString(ADDRESS, null))
         setUserUnlocked(false)
-        assertEquals(sbc(), PreferredCodecStore.get(context, device()))
+        assertEquals(sbc(), SavedDeviceStore.getPreferred(context, device()))
     }
 }

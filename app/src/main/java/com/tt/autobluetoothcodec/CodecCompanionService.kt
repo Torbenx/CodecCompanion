@@ -104,7 +104,7 @@ class CodecCompanionService : CompanionDeviceService() {
         val device = getDevice(address)
         EventLog.get(this).log(EventType.DEVICE_APPEARED,
             device?.let { LogDevice.of(it) } ?: LogDevice(address.uppercase()), message = source)
-        if (device == null || PreferredCodecStore.get(this, device) == null)
+        if (device == null || SavedDeviceStore.getPreferred(this, device) == null)
             return
         presentDevices.add(device.address)
         if (!receiverRegistered) {

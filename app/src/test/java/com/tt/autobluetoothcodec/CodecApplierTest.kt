@@ -151,7 +151,7 @@ class CodecApplierTest {
 
     @Test
     fun appliesThePreferredCodecWithoutTarget() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         val (operation, done) = apply(null)
         runFor(VERIFY_MILLIS)
         assertEquals(EventType.CODEC_VERIFIED, done.only)

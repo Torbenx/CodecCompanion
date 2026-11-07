@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothCodecStatus
 import android.bluetooth.BluetoothDevice
 import android.os.Build
 import androidx.annotation.RequiresApi
+import kotlinx.serialization.Serializable
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 
@@ -136,6 +137,7 @@ object A2dpProfileUtil {
         )
     }
 
+    @Serializable
     data class ConfigMask(
         @CodecConfig.CodecType
         val codecType: Int = CodecConfig.CODEC_TYPE_INVALID,

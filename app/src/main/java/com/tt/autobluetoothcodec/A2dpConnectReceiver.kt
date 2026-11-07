@@ -12,7 +12,8 @@ import android.util.Log
 import androidx.core.content.IntentCompat
 
 /**
- * Applies the preferred codec when A2DP connects to a device. Up to API 30 the Bluetooth stack
+ * Applies the preferred codec when A2DP connects to a device, and notes when saved devices connect and disconnect for
+ * the Saved devices list. Up to API 30 the Bluetooth stack
  * doesn't put the receiving app on the temporary allowlist, so starting a service from here would
  * be refused in the background. The work is done within the broadcast via [goAsync] instead.
  *
@@ -34,10 +35,17 @@ class A2dpConnectReceiver : BroadcastReceiver() {
             Log.i(TAG, "received intent with unexpected action: ${intent.action}")
             return
         }
-        if (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, BluetoothProfile.STATE_DISCONNECTED) != BluetoothProfile.STATE_CONNECTED)
-            return
+        val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, BluetoothProfile.STATE_DISCONNECTED)
+        val previous = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, BluetoothProfile.STATE_DISCONNECTED)
         val device = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
-        if (device == null || PreferredCodecStore.get(context, device) == null)
+        if (device == null || SavedDeviceStore.getPreferred(context, device) == null)
+            return
+        // The time of the disconnect is the one the Saved devices list shows. The connect's covers the phone turning
+        // off while connected. A connection attempt that failed doesn't count.
+        val disconnected = state == BluetoothProfile.STATE_DISCONNECTED && previous != BluetoothProfile.STATE_CONNECTING
+        if (state == BluetoothProfile.STATE_CONNECTED || disconnected)
+            SavedDeviceStore.updateInfo(context, device, lastConnected = System.currentTimeMillis())
+        if (state != BluetoothProfile.STATE_CONNECTED)
             return
 
         val log = EventLog.get(context)

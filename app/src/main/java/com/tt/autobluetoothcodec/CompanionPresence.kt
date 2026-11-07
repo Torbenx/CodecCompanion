@@ -28,7 +28,7 @@ object CompanionPresence {
     fun update(context: Context, device: BluetoothDevice, logChange: Boolean = true) {
         if (!canObserve(context))
             return
-        setObserving(context, device, PreferredCodecStore.get(context, device) != null, logChange)
+        setObserving(context, device, SavedDeviceStore.getPreferred(context, device) != null, logChange)
     }
 
     fun stopObserving(context: Context, device: BluetoothDevice) {

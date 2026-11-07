@@ -18,7 +18,7 @@ import com.tt.autobluetoothcodec.EventType
 import com.tt.autobluetoothcodec.LogCodecConfig
 import com.tt.autobluetoothcodec.LogDevice
 import com.tt.autobluetoothcodec.MainActivity
-import com.tt.autobluetoothcodec.PreferredCodecStore
+import com.tt.autobluetoothcodec.SavedDeviceStore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
@@ -140,18 +140,18 @@ class AppSnippet : Snippet {
 
     @Rpc(description = "The device's preferred codec, or null.")
     fun getPreferredCodec(address: String): JSONObject? = onMain {
-        PreferredCodecStore.get(context, device(address))?.let { toJson(it.toAndroid()) }
+        SavedDeviceStore.getPreferred(context, device(address))?.let { toJson(it.toAndroid()) }
     }
 
     @Rpc(description = "Saves a preferred codec without asking for a link, and observes the device like the app does.")
     fun setPreferredCodec(address: String, config: JSONObject) = onMain {
-        PreferredCodecStore.set(context, device(address), appConfig(config))
+        SavedDeviceStore.setPreferred(context, device(address), appConfig(config))
         CompanionPresence.update(context, device(address))
     }
 
     @Rpc(description = "Deletes the device's preferred codec and stops observing it, like the app does.")
     fun deletePreferredCodec(address: String) = onMain {
-        PreferredCodecStore.remove(context, device(address))
+        SavedDeviceStore.remove(context, device(address))
         CompanionPresence.update(context, device(address))
     }
 
@@ -162,7 +162,7 @@ class AppSnippet : Snippet {
     fun resetForTest() = onMain {
         CodecApplier.resetForTest(context)
         EventLog.resetForTest(context)
-        PreferredCodecStore.clearForTest(context)
+        SavedDeviceStore.clearForTest(context)
         MainActivity.resetForTest()
     }
 

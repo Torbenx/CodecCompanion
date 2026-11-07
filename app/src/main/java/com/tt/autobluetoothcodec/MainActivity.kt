@@ -517,15 +517,19 @@ class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
             associateFor(device, operation) { storePreferredConfig(device, config, operation, mayAssociate = false) }
             return
         }
-        PreferredCodecStore.set(this, device, config)
+        SavedDeviceStore.setPreferred(this, device, config)
+        // Saving needs a connected device, so it's connected now
+        SavedDeviceStore.updateInfo(this, device, name = device.name, lastConnected = System.currentTimeMillis(),
+            capabilities = connectedDevices.firstOrNull { it.address.equals(device.address, ignoreCase = true) }
+                ?.configMasks?.takeIf { it.isNotEmpty() })
         CompanionPresence.update(this, device)
         operation.resolve(EventType.PREFERRED_SAVED)
         pullBluetoothState()
     }
 
     private fun deletePreferredConfig(device: BluetoothDevice) {
-        val config = PreferredCodecStore.get(this, device)
-        PreferredCodecStore.remove(this, device)
+        val config = SavedDeviceStore.getPreferred(this, device)
+        SavedDeviceStore.remove(this, device)
         log.log(EventType.PREFERRED_DELETED, LogDevice.of(device), config = config?.let { LogCodecConfig.of(it) })
         CompanionPresence.update(this, device)
         pullBluetoothState()
@@ -552,7 +556,7 @@ class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
     private fun pullBluetoothState() {
         val profile = a2dpProfile
         bluetoothEnabled = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
-        hasSavedDevices = PreferredCodecStore.hasAny(this)
+        hasSavedDevices = SavedDeviceStore.hasAny(this)
         profileWaitPolls = if (profile != null || !bluetoothEnabled) 0 else profileWaitPolls + 1
         devicesKnown = profile != null || profileWaitPolls > PROFILE_WAIT_POLLS
         if (profile == null) {
@@ -566,8 +570,18 @@ class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
             emptyList()
         }
         connectedDevices = devices.map { readDeviceData(profile, it) }
-        for ((device, data) in devices.zip(connectedDevices))
+        for ((device, data) in devices.zip(connectedDevices)) {
             logObservedCodec(device, data)
+            updateSavedInfo(device, data)
+        }
+    }
+
+    /** Keeps the name and the offered values of a saved device as they're read, the store only writes changes. */
+    private fun updateSavedInfo(device: BluetoothDevice, data: DeviceData) {
+        if (data.preferredConfig == null)
+            return
+        SavedDeviceStore.updateInfo(this, device, name = device.name,
+            capabilities = data.configMasks.takeIf { it.isNotEmpty() })
     }
 
     /**
@@ -596,7 +610,7 @@ class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
         val associationRequired = PermissionUtil.isAssociationRequired(this, device)
                 || PermissionUtil.isAssociationRequiredForAutoApply(this, device)
         val associated = PermissionUtil.hasAssociation(this, device)
-        val preferredConfig = PreferredCodecStore.get(this, device)
+        val preferredConfig = SavedDeviceStore.getPreferred(this, device)
         val targetConfig = applier.pending.value[device.address.uppercase()]
         try {
             val androidConfig = A2dpProfileUtil.getCurrentCodecConfig(profile, device)

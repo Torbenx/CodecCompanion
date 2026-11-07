@@ -18,6 +18,7 @@ import com.tt.autobluetoothcodec.TestSupport.VERIFY_MILLIS
 import com.tt.autobluetoothcodec.TestSupport.sbc
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -40,9 +41,14 @@ class A2dpConnectReceiverTest {
         a2dp.connected.add(ADDRESS)
     }
 
-    private fun intent(state: Int = BluetoothProfile.STATE_CONNECTED, action: String = BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED) =
+    private fun intent(
+        state: Int = BluetoothProfile.STATE_CONNECTED,
+        action: String = BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED,
+        previous: Int = BluetoothProfile.STATE_CONNECTING,
+    ) =
         Intent(action)
             .putExtra(BluetoothProfile.EXTRA_STATE, state)
+            .putExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, previous)
             .putExtra(BluetoothDevice.EXTRA_DEVICE, device())
 
     /** Delivers [intent] like the system does, returns the broadcast's result for goAsync. */
@@ -83,7 +89,7 @@ class A2dpConnectReceiverTest {
 
     @Test
     fun appliesThePreferredCodecAndFinishesAfterTheLog() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         val result = deliver(intent())
         runFor(VERIFY_MILLIS)
         assertEquals("manifest receiver", events.first().message)
@@ -96,7 +102,7 @@ class A2dpConnectReceiverTest {
 
     @Test
     fun givesUpAtTheDeadline() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         a2dp.connectsAutomatically = false
         val result = deliver(intent())
         runFor(14_000)
@@ -106,9 +112,28 @@ class A2dpConnectReceiverTest {
         assertTrue(isFinished(result))
     }
 
+    private fun lastConnected() = SavedDeviceStore.getInfo(context, device())?.lastConnected
+
+    @Test
+    fun notesWhenASavedDeviceConnectsAndDisconnects() {
+        SavedDeviceStore.setPreferred(context, device(), sbc())
+        deliver(intent())
+        val connected = lastConnected()!!
+        runFor(60_000)
+        receiver.onReceive(context, intent(BluetoothProfile.STATE_DISCONNECTED, previous = BluetoothProfile.STATE_CONNECTED))
+        assertTrue(lastConnected()!! > connected)
+    }
+
+    @Test
+    fun aFailedConnectionAttemptIsntNoted() {
+        SavedDeviceStore.setPreferred(context, device(), sbc())
+        receiver.onReceive(context, intent(BluetoothProfile.STATE_DISCONNECTED, previous = BluetoothProfile.STATE_CONNECTING))
+        assertNull(lastConnected())
+    }
+
     @Test
     fun anExceptionResolvesError() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         a2dp.connectFailure = IllegalStateException("broken")
         val result = deliver(intent())
         assertEquals(EventType.ERROR, resolution(operationUid)!!.type)

@@ -102,7 +102,7 @@ class CodecApplier @VisibleForTesting internal constructor(
             reject(operation, onDone, EventType.NO_PERMISSION)
             return
         }
-        val config = target ?: PreferredCodecStore.get(context, device)
+        val config = target ?: SavedDeviceStore.getPreferred(context, device)
         if (config == null) {
             reject(operation, onDone, EventType.NO_PREFERRED_CODEC)
             return

@@ -38,7 +38,7 @@ object TestSupport {
         setUserUnlocked(true)
         EventLog.resetForTest(context)
         CodecApplier.resetForTest(context, a2dp)
-        PreferredCodecStore.clearForTest(context)
+        SavedDeviceStore.clearForTest(context)
         return CodecApplier.get(context)
     }
 

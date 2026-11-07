@@ -147,13 +147,13 @@ class CompanionPresenceTest {
         link()
         CompanionPresence.update(context, device())
         assertTrue(companionManager.observed.isEmpty())
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         CompanionPresence.update(context, device())
         // By address up to API 35, as the manager stores it, and by association id since API 36
         val expected = if (sdk >= 36) "id " + PermissionUtil.findAssociations(context, device()).single().id
             else PermissionUtil.findAssociatedAddresses(context, device()).single()
         assertEquals(setOf(expected), companionManager.observed)
-        PreferredCodecStore.remove(context, device())
+        SavedDeviceStore.remove(context, device())
         CompanionPresence.update(context, device())
         assertTrue(companionManager.observed.isEmpty())
         assertEquals(listOf("not observing presence", "observing presence", "not observing presence"),
@@ -164,7 +164,7 @@ class CompanionPresenceTest {
     @Config(sdk = [28, 31, 32])
     fun nothingIsObservedBefore33() {
         link()
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         CompanionPresence.update(context, device())
         CompanionPresence.syncAll(context)
         assertTrue(companionManager.observed.isEmpty())
@@ -175,11 +175,11 @@ class CompanionPresenceTest {
     @Config(sdk = [33, 36])
     fun syncAllRepairsObservingWithoutLogging() {
         link()
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         CompanionPresence.syncAll(context)
         assertEquals(1, companionManager.observed.size)
         // Like after clearing the app data: the link and observing stay, the preferred codec is gone
-        PreferredCodecStore.remove(context, device())
+        SavedDeviceStore.remove(context, device())
         CompanionPresence.syncAll(context)
         assertTrue(companionManager.observed.isEmpty())
         assertTrue(events.none { it.type == EventType.OBSERVING_CHANGED })
@@ -204,7 +204,7 @@ class CompanionPresenceTest {
         assertTrue(PermissionUtil.hasAssociation(context, device()))
         // Passed back unchanged, the manager compares the strings exactly before API 33
         assertEquals(listOf(ADDRESS.lowercase()), PermissionUtil.findAssociatedAddresses(context, device()))
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         CompanionPresence.update(context, device())
         if (sdk >= 33)
             assertEquals(setOf(ADDRESS.lowercase()), companionManager.observed)

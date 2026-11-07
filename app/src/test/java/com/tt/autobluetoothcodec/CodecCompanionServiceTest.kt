@@ -87,7 +87,7 @@ class CodecCompanionServiceTest {
 
     @Test
     fun appearingRegistersTheReceiverOnceWithoutApplying() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         val before = receiverCount()
         // A2DP is connected already, still only A2DP connecting applies the preferred codec
         service.onDeviceAppeared(ADDRESS)
@@ -103,8 +103,8 @@ class CodecCompanionServiceTest {
 
     @Test
     fun a2dpConnectingAppliesOnlyForPresentDevices() {
-        PreferredCodecStore.set(context, device(ADDRESS), sbc())
-        PreferredCodecStore.set(context, device(OTHER_ADDRESS), sbc())
+        SavedDeviceStore.setPreferred(context, device(ADDRESS), sbc())
+        SavedDeviceStore.setPreferred(context, device(OTHER_ADDRESS), sbc())
         service.onDeviceAppeared(ADDRESS)
         runFor(VERIFY_MILLIS)
         a2dpConnected(ADDRESS)
@@ -117,7 +117,7 @@ class CodecCompanionServiceTest {
 
     @Test
     fun disappearingCancelsThePendingRequest() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         a2dp.onSet = { _, _ -> }
         service.onDeviceAppeared(ADDRESS)
         a2dpConnected(ADDRESS)
@@ -133,7 +133,7 @@ class CodecCompanionServiceTest {
 
     @Test
     fun destroyingUnregistersTheReceiver() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         val before = receiverCount()
         service.onDeviceAppeared(ADDRESS)
         runFor(VERIFY_MILLIS)
@@ -143,7 +143,7 @@ class CodecCompanionServiceTest {
 
     @Test
     fun aRestartedServiceKnowsNoPresentDevices() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         service.onDeviceAppeared(ADDRESS)
         runFor(VERIFY_MILLIS)
         // Like the system restarting the process: a new instance, without onDeviceAppeared
@@ -157,7 +157,7 @@ class CodecCompanionServiceTest {
     @Test
     @Config(sdk = [36], shadows = [ObservingCompanionDeviceManager::class])
     fun twoSourcesAreOneAppearance() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         val id = link()
         presence(id, DevicePresenceEvent.EVENT_BT_CONNECTED)
         presence(id, DevicePresenceEvent.EVENT_BLE_APPEARED)
@@ -167,7 +167,7 @@ class CodecCompanionServiceTest {
     @Test
     @Config(sdk = [36], shadows = [ObservingCompanionDeviceManager::class])
     fun theDeviceStaysPresentWhileOneSourceSeesIt() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         val id = link()
         presence(id, DevicePresenceEvent.EVENT_BLE_APPEARED)
         presence(id, DevicePresenceEvent.EVENT_BT_CONNECTED)
@@ -188,7 +188,7 @@ class CodecCompanionServiceTest {
     @Test
     @Config(sdk = [36], shadows = [ObservingCompanionDeviceManager::class])
     fun theStringCallbacksAreIgnoredSince36() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         service.onDeviceAppeared(ADDRESS)
         service.onDeviceDisappeared(ADDRESS)
         assertTrue(operations(EventType.DEVICE_APPEARED).isEmpty())
@@ -198,7 +198,7 @@ class CodecCompanionServiceTest {
     @Test
     @Config(sdk = [36], shadows = [ObservingCompanionDeviceManager::class])
     fun eventsOfUnknownAssociationsAreIgnored() {
-        PreferredCodecStore.set(context, device(), sbc())
+        SavedDeviceStore.setPreferred(context, device(), sbc())
         presence(42, DevicePresenceEvent.EVENT_BT_CONNECTED)
         assertNull(events.firstOrNull { it.type == EventType.DEVICE_APPEARED })
     }
