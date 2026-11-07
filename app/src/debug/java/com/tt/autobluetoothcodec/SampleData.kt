@@ -68,6 +68,7 @@ internal object SampleData {
         preferred: CodecConfig? = null,
         name: String = NAME,
         address: String = ADDRESS,
+        target: CodecConfig? = null,
     ) = DeviceData(
         address = address,
         name = name,
@@ -79,11 +80,12 @@ internal object SampleData {
         associated = associated,
         preferredConfig = preferred,
         readError = if (statusReadable) null else "java.lang.SecurityException: Need BLUETOOTH_PRIVILEGED permission",
+        targetConfig = target,
     )
 
     /** The Sony with AAC, by default. */
-    fun sony(codec: CodecConfig? = aac(), preferred: CodecConfig? = null) =
-        device(codec, masks = SONY_MASKS, preferred = preferred, name = SONY_NAME, address = SONY_ADDRESS)
+    fun sony(codec: CodecConfig? = aac(), preferred: CodecConfig? = null, target: CodecConfig? = null) =
+        device(codec, masks = SONY_MASKS, preferred = preferred, name = SONY_NAME, address = SONY_ADDRESS, target = target)
 
     fun state(
         vararg devices: DeviceData,

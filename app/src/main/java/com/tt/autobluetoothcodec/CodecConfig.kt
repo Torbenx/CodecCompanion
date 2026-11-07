@@ -193,6 +193,23 @@ sealed class CodecConfig : Cloneable {
         )
     }
 
+    /**
+     * This configuration as a target with the codec specific options it leaves to the system filled in from [actual],
+     * where it's the same codec: the values the system chose, which [isFulfilledBy] accepts.
+     */
+    fun withSystemChoices(actual: CodecConfig?): CodecConfig {
+        if (actual == null || actual.getCodecType() != getCodecType())
+            return this
+        val target = toAndroid()
+        val other = actual.toAndroid()
+        return fromAndroid(target.copy(
+            codecSpecific1 = if (target.codecSpecific1 == 0) other.codecSpecific1 else target.codecSpecific1,
+            codecSpecific2 = if (target.codecSpecific2 == 0) other.codecSpecific2 else target.codecSpecific2,
+            codecSpecific3 = if (target.codecSpecific3 == 0) other.codecSpecific3 else target.codecSpecific3,
+            codecSpecific4 = if (target.codecSpecific4 == 0) other.codecSpecific4 else target.codecSpecific4
+        )) ?: this
+    }
+
     /** For example "LDAC, 96 kHz, 24-bit, adaptive bitrate". */
     fun describe(): String {
         val codec = getCodecName(getCodecType()) ?: "unknown codec"

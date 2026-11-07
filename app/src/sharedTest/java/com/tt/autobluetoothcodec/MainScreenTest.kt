@@ -1,5 +1,9 @@
 package com.tt.autobluetoothcodec
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -484,6 +488,70 @@ class MainScreenTest {
             "setCodec $ADDRESS LDAC, 96 kHz, 24-bit",
             "setCodec $ADDRESS LDAC, 96 kHz, 32-bit, 990 kbps",
         ), actions.calls)
+    }
+
+    // The codec being applied
+
+    private fun SemanticsNodeInteraction.assertState(state: String) =
+        assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, state))
+
+    @Test
+    fun whileACodecChangeIsPendingTheCollapsedChipsShowItsTarget() {
+        show(device(target = SampleData.aac()))
+        compose.onNodeWithText("AAC").assertState("Pending")
+        compose.onNodeWithText("44100 Hz").assertState("Pending")
+        compose.onNodeWithText("16-bit").assertState("Pending")
+        text("LDAC").assertDoesNotExist()
+    }
+
+    @Test
+    fun onlyTheRowsTheDeviceDoesntReportYetArePending() {
+        show(device(target = ldac(CodecConfig.SAMPLE_RATE_48000)))
+        expand()
+        chip("LDAC").assertState("Selected")
+        chip("48000 Hz").assertState("Pending")
+        chip("32-bit").assertState("Selected")
+        chip("96000 Hz").assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.StateDescription))
+    }
+
+    @Test
+    fun theBitrateLeftToTheSystemShowsTheReportedOne() {
+        show(device(ldac(bitrate = LDACCodecConfig.BITRATE_HIGH), target = ldac()))
+        expand()
+        chip("990 kbps").assertState("Selected")
+    }
+
+    @Test
+    fun choicesBuildOnThePendingCodec() {
+        show(device(target = codec(CodecConfig.CODEC_TYPE_APTX_HD, CodecConfig.SAMPLE_RATE_48000, CodecConfig.BITS_PER_SAMPLE_24)))
+        expand()
+        // Already the target
+        chip("aptX HD").performClick()
+        chip("44100 Hz").performClick()
+        // Back to the reported codec, with the target's rate and size
+        chip("LDAC").performClick()
+        assertEquals(listOf(
+            "setCodec $ADDRESS " +
+                codec(CodecConfig.CODEC_TYPE_APTX_HD, CodecConfig.SAMPLE_RATE_44100, CodecConfig.BITS_PER_SAMPLE_24).describe(),
+            "setCodec $ADDRESS " + ldac(CodecConfig.SAMPLE_RATE_48000, CodecConfig.BITS_PER_SAMPLE_24).describe(),
+        ), actions.calls)
+    }
+
+    @Test
+    fun aPendingPreferredCodecCountsAsActive() {
+        show(device(target = SampleData.aac(), preferred = SampleData.aac()))
+        expand()
+        // The pending codec is the preferred one, so there's nothing to save
+        text("Preferred codec is active").assertExists()
+        compose.onNodeWithTag("save_preferred").assertDoesNotExist()
+    }
+
+    @Test
+    fun savingWhileACodecChangeIsPendingOffersItsTarget() {
+        show(device(target = SampleData.aac()))
+        expand()
+        action("save_preferred").performClick()
+        assertEquals(listOf("savePreferred $ADDRESS ${SampleData.aac().describe()}"), actions.calls)
     }
 
     @Test

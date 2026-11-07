@@ -124,6 +124,25 @@ class CodecConfigTest {
     }
 
     @Test
+    fun withSystemChoices_fillsInTheOptionsLeftToTheSystem() {
+        val actual = config(android(CodecConfig.CODEC_TYPE_LDAC, CodecConfig.SAMPLE_RATE_48000, CodecConfig.BITS_PER_SAMPLE_32, 1003))
+        val shown = ldac(LDACCodecConfig.BITRATE_SYSTEM_DEFAULT).withSystemChoices(actual) as LDACCodecConfig
+        // Only the bitrate is the system's, the rate and size stay the target's
+        assertEquals(LDACCodecConfig.BITRATE_ADAPTIVE, shown.bitrate)
+        assertEquals(CodecConfig.SAMPLE_RATE_96000, shown.sampleRate)
+        assertEquals(CodecConfig.BITS_PER_SAMPLE_24, shown.bitsPerSample)
+    }
+
+    @Test
+    fun withSystemChoices_keepsExplicitOptionsAndIgnoresOtherCodecs() {
+        val actual = config(android(CodecConfig.CODEC_TYPE_LDAC, CodecConfig.SAMPLE_RATE_96000, CodecConfig.BITS_PER_SAMPLE_24, 1003))
+        assertEquals(ldac(LDACCodecConfig.BITRATE_HIGH), ldac(LDACCodecConfig.BITRATE_HIGH).withSystemChoices(actual))
+        val target = ldac(LDACCodecConfig.BITRATE_SYSTEM_DEFAULT)
+        assertEquals(target, target.withSystemChoices(config(android(CodecConfig.CODEC_TYPE_AAC, codecSpecific1 = 128))))
+        assertEquals(target, target.withSystemChoices(null))
+    }
+
+    @Test
     fun equals_comparesEveryParameter() {
         assertEquals(ldac(LDACCodecConfig.BITRATE_LOW), ldac(LDACCodecConfig.BITRATE_LOW))
         assertEquals(ldac(LDACCodecConfig.BITRATE_LOW).hashCode(), ldac(LDACCodecConfig.BITRATE_LOW).hashCode())

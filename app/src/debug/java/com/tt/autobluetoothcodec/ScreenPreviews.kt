@@ -175,6 +175,14 @@ internal val mainScreenStates = emptyStates + listOf(
     mainScene("Expanded, long name", state(
         device(name = LONG_NAME, preferred = ldac(CodecConfig.SAMPLE_RATE_48000)),
     ), setOf(ADDRESS)),
+    // The chips show the codec being applied, the rows the device doesn't report yet in the secondary color
+    mainScene("Codec change pending", state(
+        device(target = aac(), preferred = aac()),
+        sony(target = ldac(CodecConfig.SAMPLE_RATE_48000, CodecConfig.BITS_PER_SAMPLE_16)),
+    )),
+    mainScene("Expanded, codec change pending", state(device(target = aac())), setOf(ADDRESS)),
+    mainScene("Expanded, sample rate change pending",
+        state(device(target = ldac(CodecConfig.SAMPLE_RATE_48000))), setOf(ADDRESS)),
     mainScene("Many devices", state(
         device(preferred = ldac()),
         sony(preferred = aac()),

@@ -96,6 +96,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -126,7 +127,15 @@ internal data class DeviceData(
     val preferredConfig: CodecConfig?,
     // Why the codec status couldn't be read, null if it was read
     val readError: String? = null,
-)
+    // The codec being applied, null while no codec change is pending
+    val targetConfig: CodecConfig? = null,
+) {
+    /**
+     * What the card shows as the device's codec: the codec being applied, with the options it leaves to the system as
+     * reported, otherwise the reported codec. Choosing a value changes this one, so quick taps build on each other.
+     */
+    val shownConfig: CodecConfig? get() = targetConfig?.withSystemChoices(codecConfig) ?: codecConfig
+}
 
 /** Everything the main screen shows, provided by [MainActivity]. */
 internal data class MainScreenState(
@@ -589,6 +598,7 @@ class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
                 || PermissionUtil.isAssociationRequiredForAutoApply(this, device)
         val associated = PermissionUtil.hasAssociation(this, device)
         val preferredConfig = PreferredCodecStore.get(this, device)
+        val targetConfig = applier.pending.value[device.address.uppercase()]
         try {
             val androidConfig = A2dpProfileUtil.getCurrentCodecConfig(profile, device)
             Log.d(TAG, androidConfig.toString())
@@ -601,15 +611,16 @@ class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
                 statusReadable = true,
                 associationRequired = associationRequired,
                 associated = associated,
-                preferredConfig = preferredConfig
+                preferredConfig = preferredConfig,
+                targetConfig = targetConfig
             )
         } catch (e: SecurityException) {
             // Since API 36 reading the codec status requires an association as well
             Log.d(TAG, "Bluetooth refused to report the codec status of $name")
-            return DeviceData(device.address, name, null, null, ArrayList(), statusReadable = false, associationRequired, associated, preferredConfig, readError = e.toString())
+            return DeviceData(device.address, name, null, null, ArrayList(), statusReadable = false, associationRequired, associated, preferredConfig, readError = e.toString(), targetConfig = targetConfig)
         } catch (e: Exception) {
             Log.e(TAG, "reading the codec status of $name failed", e)
-            return DeviceData(device.address, name, null, null, ArrayList(), statusReadable = true, associationRequired, associated, preferredConfig, readError = e.toString())
+            return DeviceData(device.address, name, null, null, ArrayList(), statusReadable = true, associationRequired, associated, preferredConfig, readError = e.toString(), targetConfig = targetConfig)
         }
     }
 
@@ -640,20 +651,32 @@ private val SHOW_UNCONFIGURABLE_OPTIONS = false
 /**
  * A chip of the codec's values. The selected one is filled in the inverse primary color, the theme's color at tone 80
  * in light mode and 40 in dark mode: a step stronger than Save's container, without outshouting the buttons. The
- * others are faintly outlined. The collapsed card's chips look like the selected ones, but can't be chosen.
+ * others are faintly outlined. While the device doesn't report the selected value yet, since a codec change is pending,
+ * it's filled in the secondary color instead. The collapsed card's chips look like the selected ones, but can't be
+ * chosen.
  */
 @Composable
-private fun ConfigChip(text: String, selected: Boolean, enabled: Boolean, clickable: Boolean, onClick: () -> Unit) {
+private fun ConfigChip(text: String, selected: Boolean, pending: Boolean, enabled: Boolean, clickable: Boolean,
+                       onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
         Surface(
             shape = RoundedCornerShape(8.dp),
-            color = if (selected) scheme.inversePrimary else Color.Transparent,
-            contentColor = if (selected) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
+            color = when {
+                !selected -> Color.Transparent
+                pending -> scheme.secondary
+                else -> scheme.inversePrimary
+            },
+            contentColor = when {
+                !selected -> scheme.onSurfaceVariant
+                pending -> scheme.onSecondary
+                else -> scheme.onPrimaryContainer
+            },
             border = if (selected) null else BorderStroke(1.dp, scheme.outlineVariant),
             enabled = clickable,
             onClick = onClick,
             modifier = Modifier.graphicsLayer(alpha = if (enabled) 1f else 0.38f)
+                .semantics { if (selected) stateDescription = if (pending) "Pending" else "Selected" }
         ) {
             Text(text, Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelLarge)
         }
@@ -661,9 +684,24 @@ private fun ConfigChip(text: String, selected: Boolean, enabled: Boolean, clicka
 }
 
 @Composable
-private fun ActiveConfigChip(text: String) {
-    ConfigChip(text = text, selected = true, enabled = true, onClick = {}, clickable = false)
+private fun ActiveConfigChip(text: String, pending: Boolean = false) {
+    ConfigChip(text = text, selected = true, pending = pending, enabled = true, onClick = {}, clickable = false)
 }
+
+/**
+ * Which values of the shown codec the device doesn't report yet, each row's chips on its own: the codec, the sample
+ * rate, the sample size, and the codec specific options, which are pending until the device reports that codec.
+ */
+private class PendingRows(shown: CodecConfig?, reported: CodecConfig?) {
+    val codec = shown != null && shown.getCodecType() != reported?.getCodecType()
+    val sampleRate = shown != null && shown.sampleRate != reported?.sampleRate
+    val bitsPerSample = shown != null && shown.bitsPerSample != reported?.bitsPerSample
+    val options = shown != null && (codec || shown.toAndroid().options() != reported?.toAndroid()?.options())
+
+    private fun AndroidCodecConfig.options() = listOf(codecSpecific1, codecSpecific2, codecSpecific3, codecSpecific4)
+}
+
+private val DeviceData.pendingRows get() = PendingRows(shownConfig, codecConfig)
 
 /**
  * The chip of the collapsed card that says the preferred codec is active, after the codec's chips, in the green of the
@@ -724,7 +762,8 @@ private enum class BannerAction(val label: String, val icon: ImageVector, val ta
 @Composable
 private fun PreferredBanner(device: DeviceData, actions: MainScreenActions) {
     val preferred = device.preferredConfig
-    val active = preferred != null && preferred == device.codecConfig
+    // Compared with the codec being applied, like the chips
+    val active = preferred != null && preferred == device.shownConfig
     val action = when {
         preferred == null -> null
         active -> BannerAction.DELETE
@@ -814,11 +853,11 @@ private fun BannerButton(device: DeviceData, action: BannerAction, actions: Main
 /**
  * Ends the expanded card when there's something to save: nothing is saved yet, or the codec differs from the
  * preferred one, which it then replaces. A tonal button as wide as the row, up to 420 dp. Never for a codec this app
- * doesn't know.
+ * doesn't know. While a codec change is pending it saves the codec being applied, the one the chips show.
  */
 @Composable
 private fun SavePreferredButton(device: DeviceData, actions: MainScreenActions) {
-    val current = device.codecConfig
+    val current = device.shownConfig
     if (current == null || current == device.preferredConfig)
         return
     val scheme = MaterialTheme.colorScheme
@@ -845,7 +884,8 @@ private data class ConfigRowItem(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ConfigSelectRow(title: String, items: List<ConfigRowItem>, selectedValue: Int, onSelected: (Int) -> Unit) {
+private fun ConfigSelectRow(title: String, items: List<ConfigRowItem>, selectedValue: Int, pending: Boolean,
+                            onSelected: (Int) -> Unit) {
     Column {
         Text(title, style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(4.dp))
@@ -857,6 +897,7 @@ private fun ConfigSelectRow(title: String, items: List<ConfigRowItem>, selectedV
                 ConfigChip(
                     text = item.text,
                     selected = item.value == selectedValue,
+                    pending = pending,
                     enabled = item.enabled,
                     clickable = item.enabled,
                     onClick = { onSelected(item.value) },
@@ -866,15 +907,22 @@ private fun ConfigSelectRow(title: String, items: List<ConfigRowItem>, selectedV
     }
 }
 
-private fun isCodecTypeSupported(device: DeviceData, @CodecConfig.CodecType newCodecType: Int): Boolean {
-    return device.configMasks.any { it.codecType == newCodecType }
+private fun isCodecTypeSupported(masks: List<A2dpProfileUtil.ConfigMask>, @CodecConfig.CodecType newCodecType: Int): Boolean {
+    return masks.any { it.codecType == newCodecType }
 }
 
-private fun findSelectableConfig(device: DeviceData, @CodecConfig.CodecType newCodecType: Int): CodecConfig {
+/**
+ * The configuration of [newCodecType] to switch to, keeping [curSampleRate] and [curBitsPerSample] where the codec
+ * supports them, otherwise the first supported values.
+ */
+private fun findSelectableConfig(
+    masks: List<A2dpProfileUtil.ConfigMask>,
+    @CodecConfig.CodecType newCodecType: Int,
+    @CodecConfig.SampleRate curSampleRate: Int,
+    @CodecConfig.BitsPerSample curBitsPerSample: Int
+): CodecConfig {
     val validConfigs = TreeMap<Int, CodecConfig>()
-    val curSampleRate = device.androidCodecConfig?.sampleRate ?: CodecConfig.SAMPLE_RATE_NONE
-    val curBitsPerSample = device.androidCodecConfig?.bitsPerSample ?: CodecConfig.BITS_PER_SAMPLE_NONE
-    for (configMask in device.configMasks) {
+    for (configMask in masks) {
         if (configMask.codecType != newCodecType)
             continue
 
@@ -910,12 +958,12 @@ private fun findSelectableConfig(device: DeviceData, @CodecConfig.CodecType newC
 }
 
 private fun isConfigSelectable(
-    device: DeviceData,
+    masks: List<A2dpProfileUtil.ConfigMask>,
     @CodecConfig.CodecType codecType: Int,
     @CodecConfig.SampleRate sampleRate: Int,
     @CodecConfig.BitsPerSample bitsPerSample: Int
 ): Boolean {
-    for (configMask in device.configMasks) {
+    for (configMask in masks) {
         if (configMask.codecType == codecType &&
             configMask.isSampleRateSupported(sampleRate) &&
             configMask.isSampleSizeSupported(bitsPerSample)) {
@@ -925,41 +973,60 @@ private fun isConfigSelectable(
     return false
 }
 
-private fun isSampleRateSelectable(device: DeviceData, config: CodecConfig, @CodecConfig.SampleRate sampleRate: Int): Boolean {
-    return isConfigSelectable(device, config.getCodecType(), sampleRate, config.bitsPerSample)
+private fun isSampleRateSelectable(masks: List<A2dpProfileUtil.ConfigMask>, config: CodecConfig, @CodecConfig.SampleRate sampleRate: Int): Boolean {
+    return isConfigSelectable(masks, config.getCodecType(), sampleRate, config.bitsPerSample)
 }
 
-private fun isSampleSizeSelectable(device: DeviceData, config: CodecConfig, @CodecConfig.BitsPerSample bitsPerSample: Int): Boolean {
-    return isConfigSelectable(device, config.getCodecType(), config.sampleRate, bitsPerSample)
+private fun isSampleSizeSelectable(masks: List<A2dpProfileUtil.ConfigMask>, config: CodecConfig, @CodecConfig.BitsPerSample bitsPerSample: Int): Boolean {
+    return isConfigSelectable(masks, config.getCodecType(), config.sampleRate, bitsPerSample)
 }
 
+/**
+ * The rows of chips to choose the codec and its values, with [config] selected, null if it's unknown to this app, and
+ * [masks] the values that can be chosen. Each row is colored as pending on its own, see [PendingRows]. Choosing a
+ * codec keeps the sample rate and size of [config], or else of [android], where the new codec supports them.
+ */
 @Composable
-private fun CodecConfigSelection(device: DeviceData, onConfigChange: (CodecConfig) -> Unit) {
+private fun CodecConfigSelection(
+    config: CodecConfig?,
+    android: AndroidCodecConfig?,
+    masks: List<A2dpProfileUtil.ConfigMask>,
+    pending: PendingRows,
+    onConfigChange: (CodecConfig) -> Unit
+) {
     Column {
-        val currentCodecType = device.codecConfig?.getCodecType() ?: CodecConfig.CODEC_TYPE_INVALID
+        val currentCodecType = config?.getCodecType() ?: CodecConfig.CODEC_TYPE_INVALID
         ConfigSelectRow(
             "Codec",
             CodecConfig.CODEC_TYPES.map {
-                ConfigRowItem(CodecConfig.getCodecName(it)!!, it, isCodecTypeSupported(device, it))
+                ConfigRowItem(CodecConfig.getCodecName(it)!!, it, isCodecTypeSupported(masks, it))
             },
             currentCodecType,
+            pending.codec,
             onSelected = {
                 if (it != currentCodecType) {
-                    onConfigChange(findSelectableConfig(device, it))
+                    onConfigChange(findSelectableConfig(
+                        masks,
+                        it,
+                        config?.sampleRate ?: android?.sampleRate ?: CodecConfig.SAMPLE_RATE_NONE,
+                        config?.bitsPerSample ?: android?.bitsPerSample ?: CodecConfig.BITS_PER_SAMPLE_NONE
+                    ))
                 }
             }
         )
 
         // The current codec is unknown to this app, so only offer switching to a known one
-        val config = device.codecConfig ?: return@Column
+        if (config == null)
+            return@Column
 
         Spacer(Modifier.height(16.dp))
         ConfigSelectRow(
             "Sample Rate",
             CodecConfig.SAMPLE_RATES.map {
-                ConfigRowItem("${CodecConfig.getSampleRate(it)} Hz", it, isSampleRateSelectable(device, config, it))
+                ConfigRowItem("${CodecConfig.getSampleRate(it)} Hz", it, isSampleRateSelectable(masks, config, it))
             },
             config.sampleRate,
+            pending.sampleRate,
             onSelected = {
                 val newConfig = config.clone() as CodecConfig
                 newConfig.sampleRate = it
@@ -970,8 +1037,9 @@ private fun CodecConfigSelection(device: DeviceData, onConfigChange: (CodecConfi
         Spacer(Modifier.height(16.dp))
         ConfigSelectRow(
             "Sample Size",
-            CodecConfig.SAMPLE_SIZES.map { ConfigRowItem("${CodecConfig.getBitsPerSample(it)}-bit", it, isSampleSizeSelectable(device, config, it)) },
+            CodecConfig.SAMPLE_SIZES.map { ConfigRowItem("${CodecConfig.getBitsPerSample(it)}-bit", it, isSampleSizeSelectable(masks, config, it)) },
             config.bitsPerSample,
+            pending.bitsPerSample,
             onSelected = {
                 val newConfig = config.clone() as CodecConfig
                 newConfig.bitsPerSample = it
@@ -987,6 +1055,7 @@ private fun CodecConfigSelection(device: DeviceData, onConfigChange: (CodecConfi
                     ConfigRowItem(LDACCodecConfig.getFixedBitrate(it, config.sampleRate)?.toString()?.plus(" kbps") ?: "Adaptive", it, true)
                 },
                 if (config.bitrate == LDACCodecConfig.BITRATE_SYSTEM_DEFAULT) LDACCodecConfig.BITRATE_ADAPTIVE else config.bitrate,
+                pending.options,
                 onSelected = {
                     val newConfig = config.clone() as LDACCodecConfig
                     newConfig.bitrate = it
@@ -1009,6 +1078,7 @@ private fun CodecConfigSelection(device: DeviceData, onConfigChange: (CodecConfi
                     ConfigRowItem("Very High", AACCodecConfig.VARIABLE_BITRATE_VERY_HIGH, true),
                 ),
                 config.variableBitrate,
+                pending.options,
                 onSelected = {
                     val newConfig = config.clone() as AACCodecConfig
                     newConfig.variableBitrate = it
@@ -1025,6 +1095,7 @@ private fun CodecConfigSelection(device: DeviceData, onConfigChange: (CodecConfi
                 listOf(ConfigRowItem("Default", OpusCodecConfig.ENCODE_COMPLEXITY_SYSTEM_DEFAULT, true)) +
                 (0..9).map { ConfigRowItem(it.toString(), it, true) },
                 config.encodeComplexity,
+                pending.options,
                 onSelected = {
                     val newConfig = config.clone() as OpusCodecConfig
                     newConfig.encodeComplexity = it
@@ -1050,35 +1121,45 @@ private fun CodecChips(device: DeviceData, state: MainScreenState) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        val config = device.codecConfig
+        val config = device.shownConfig
         if (config == null) {
             ActiveConfigChip(if (device.androidCodecConfig != null) "Unsupported codec" else "No codec information")
             extra()
             return@FlowRow
         }
-        CodecConfig.getCodecName(config.getCodecType())?.let {
-            ActiveConfigChip(it)
-        }
-        CodecConfig.getSampleRate(config.sampleRate)?.let {
-            ActiveConfigChip("$it Hz")
-        }
-        CodecConfig.getBitsPerSample(config.bitsPerSample)?.let {
-            ActiveConfigChip("$it-bit")
-        }
-        if (config is LDACCodecConfig) {
-            if (config.bitrate == LDACCodecConfig.BITRATE_ADAPTIVE) {
-                ActiveConfigChip("Adaptive")
-            } else {
-                LDACCodecConfig.getFixedBitrate(config.bitrate, config.sampleRate)
-                    ?.let { ActiveConfigChip("$it kbps") }
-                    ?: LDACCodecConfig.getFixedBitrate(config.bitrate)
-                        ?.let { ActiveConfigChip("${it.first}/${it.second} kbps") }
-            }
-        }
+        ConfigValueChips(config, device.pendingRows)
         if (device.preferredConfig == config) {
             PreferredChip()
         }
         extra()
+    }
+}
+
+/**
+ * The chips of [config]'s values, each colored as pending as its row in [pending]. The system default LDAC bitrate has
+ * none. They're placed in the caller's row.
+ */
+@Composable
+private fun ConfigValueChips(config: CodecConfig, pending: PendingRows?) {
+    CodecConfig.getCodecName(config.getCodecType())?.let {
+        ActiveConfigChip(it, pending?.codec == true)
+    }
+    CodecConfig.getSampleRate(config.sampleRate)?.let {
+        ActiveConfigChip("$it Hz", pending?.sampleRate == true)
+    }
+    CodecConfig.getBitsPerSample(config.bitsPerSample)?.let {
+        ActiveConfigChip("$it-bit", pending?.bitsPerSample == true)
+    }
+    if (config is LDACCodecConfig) {
+        val pendingBitrate = pending?.options == true
+        if (config.bitrate == LDACCodecConfig.BITRATE_ADAPTIVE) {
+            ActiveConfigChip("Adaptive", pendingBitrate)
+        } else {
+            LDACCodecConfig.getFixedBitrate(config.bitrate, config.sampleRate)
+                ?.let { ActiveConfigChip("$it kbps", pendingBitrate) }
+                ?: LDACCodecConfig.getFixedBitrate(config.bitrate)
+                    ?.let { ActiveConfigChip("${it.first}/${it.second} kbps", pendingBitrate) }
+        }
     }
 }
 
@@ -1119,12 +1200,15 @@ private fun DeviceCard(device: DeviceData, extended: Boolean, onToggle: () -> Un
                         LinkBanner(device, state.canAssociate)
                         Spacer(Modifier.height(16.dp))
                     }
-                    if (device.preferredConfig != null || device.codecConfig != null) {
+                    if (device.preferredConfig != null || device.shownConfig != null) {
                         PreferredBanner(device, actions)
                         Spacer(Modifier.height(16.dp))
                     }
                     CodecConfigSelection(
-                        device,
+                        device.shownConfig,
+                        device.androidCodecConfig,
+                        device.configMasks,
+                        device.pendingRows,
                         onConfigChange = { actions.setCodec(device.address, it) }
                     )
                     SavePreferredButton(device, actions)
