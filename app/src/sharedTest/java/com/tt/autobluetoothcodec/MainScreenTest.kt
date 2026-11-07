@@ -158,6 +158,26 @@ class MainScreenTest {
         text(NAME).assertExists()
     }
 
+    @Test
+    fun aLoneDeviceStartsCollapsed() {
+        show(device())
+        text("LDAC").assertExists()
+        text("Codec").assertDoesNotExist()
+    }
+
+    @Test
+    fun anExpandedCardStaysExpandedWhileTheOtherListShows() {
+        show(device())
+        expand()
+        text("Codec").assertExists()
+        compose.onNodeWithTag("list_toggle").performClick()
+        compose.onNodeWithTag("list_saved").performClick()
+        text("Codec").assertDoesNotExist()
+        compose.onNodeWithTag("list_connected").performClick()
+        compose.waitForIdle()
+        text("Codec").assertExists()
+    }
+
     // V2
 
     @Test

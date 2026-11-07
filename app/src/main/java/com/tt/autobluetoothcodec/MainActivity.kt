@@ -76,7 +76,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.key
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -160,7 +162,6 @@ class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
     companion object {
         private const val TAG = "MainActivity"
         private const val COMPANION_TAG = "CompanionAssociation"
-        private const val FIRST_DEVICES_SEEN = "first_devices_seen"
 
         // How many polls with Bluetooth on the profile may take to connect before there just are no devices
         private const val PROFILE_WAIT_POLLS = 3
@@ -247,8 +248,6 @@ class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        // After a rotation the cards keep their own state
-        firstDevicesSeen = savedInstanceState?.getBoolean(FIRST_DEVICES_SEEN) ?: false
         // Starts loading the log in the background, merging the events logged before the unlock.
         // The screen only logs on its own once a device is connected
         EventLog.get(this)
@@ -275,8 +274,7 @@ class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
                         devicesKnown = devicesKnown,
                         hasSavedDevices = hasSavedDevices
                     ),
-                    actions,
-                    initiallyExpanded = autoExpanded
+                    actions
                 )
             }
         }
@@ -287,11 +285,6 @@ class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
                 applier.pending.collect { pullBluetoothState() }
             }
         }
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putBoolean(FIRST_DEVICES_SEEN, firstDevicesSeen)
     }
 
     override fun onDestroy() {
@@ -543,9 +536,6 @@ class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
     private var handler: Handler? = null
 
     private var connectedDevices by mutableStateOf(emptyList<DeviceData>())
-    // A lone device on the first list with devices in it starts expanded, once per activity
-    private var autoExpanded by mutableStateOf(emptySet<String>())
-    private var firstDevicesSeen = false
     private var bluetoothEnabled by mutableStateOf(true)
     private var devicesKnown by mutableStateOf(false)
     private var hasSavedDevices by mutableStateOf(false)
@@ -568,10 +558,6 @@ class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
             emptyList()
         }
         connectedDevices = devices.map { readDeviceData(profile, it) }
-        if (!firstDevicesSeen && devices.isNotEmpty()) {
-            firstDevicesSeen = true
-            autoExpanded = connectedDevices.singleOrNull()?.let { setOf(it.address) } ?: emptySet()
-        }
         for ((device, data) in devices.zip(connectedDevices))
             logObservedCodec(device, data)
     }
@@ -1096,10 +1082,10 @@ private fun CodecChips(device: DeviceData, state: MainScreenState) {
     }
 }
 
+/** A device's card, expanded or collapsed as the list keeps it, so it stays that way while the other list shows. */
 @Composable
-private fun DeviceCard(device: DeviceData, initialExtended: Boolean, state: MainScreenState, actions: MainScreenActions) {
-    // Unlike remember, survives the screen being rotated
-    var extended by rememberSaveable { mutableStateOf(initialExtended) }
+private fun DeviceCard(device: DeviceData, extended: Boolean, onToggle: () -> Unit, state: MainScreenState,
+                       actions: MainScreenActions) {
     val modifier = Modifier.fillMaxWidth().padding(16.dp).testTag(deviceTag(device))
     val content = @Composable {
         Column(modifier = Modifier.padding(10.dp)) {
@@ -1151,7 +1137,7 @@ private fun DeviceCard(device: DeviceData, initialExtended: Boolean, state: Main
     // Without a codec there's nothing to expand, the card always shows how to link the device
     if (device.statusReadable) {
         Surface(
-            onClick = { extended = !extended },
+            onClick = onToggle,
             modifier = modifier,
             color = color,
             shadowElevation = 6.dp,
@@ -1346,17 +1332,28 @@ internal fun AppMenu(onOpenLog: () -> Unit, onOpenAbout: () -> Unit) {
     }
 }
 
+private fun Set<String>.toggled(address: String) = if (address in this) this - address else this + address
+
 /** The test tag of a device's card. */
 internal fun deviceTag(device: DeviceData) = "device_" + device.address.uppercase()
 
+/** Keeps a set of addresses across the activity being recreated. */
+private val AddressSetSaver = listSaver<MutableState<Set<String>>, String>(
+    save = { it.value.toList() },
+    restore = { mutableStateOf(it.toSet()) }
+)
+
 /**
  * The main screen: the connected devices with their codecs, or the saved devices, which are still to come, or an empty
- * state with a way out. The cards of the devices in [initiallyExpanded], by address, start expanded, for the previews.
+ * state with a way out. The cards start collapsed, except those of the devices in [initiallyExpanded], by address, for
+ * the previews. Each list keeps which cards are expanded and how far it's scrolled while the other one shows.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 internal fun MainScreen(state: MainScreenState, actions: MainScreenActions, initiallyExpanded: Set<String> = emptySet()) {
     var list by rememberSaveable { mutableStateOf(DeviceList.CONNECTED) }
+    var connectedExpanded by rememberSaveable(saver = AddressSetSaver) { mutableStateOf(initiallyExpanded) }
+    val connectedScroll = rememberScrollState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     Scaffold(
         // Lets UiAutomator find the elements by their test tags
@@ -1385,12 +1382,18 @@ internal fun MainScreen(state: MainScreenState, actions: MainScreenActions, init
                 CappedContent(NARROW_CONTENT, tintSides = false) { side ->
                     // Padding inside the scroll container, so the cards scroll behind the navigation bar
                     Column(
-                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(innerPadding)
+                        Modifier.fillMaxSize().verticalScroll(connectedScroll).padding(innerPadding)
                             .padding(horizontal = side)
                     ) {
-                        // Keyed, so each card keeps its own saved state
+                        // Keyed, so each card keeps its own state
                         for (device in state.devices) key(device.address) {
-                            DeviceCard(device, initialExtended = device.address in initiallyExpanded, state, actions)
+                            DeviceCard(
+                                device,
+                                extended = device.address in connectedExpanded,
+                                onToggle = { connectedExpanded = connectedExpanded.toggled(device.address) },
+                                state,
+                                actions
+                            )
                         }
                     }
                 }
