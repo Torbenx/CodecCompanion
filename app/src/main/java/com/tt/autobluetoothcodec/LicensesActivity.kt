@@ -1,7 +1,6 @@
 package com.tt.autobluetoothcodec
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.WindowInsets
@@ -27,7 +26,7 @@ import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
  * Lists the libraries the app uses with their licenses. The AboutLibraries Gradle plugin collects
  * them from the dependencies at build time, tapping one shows its license text.
  */
-class LicensesActivity : ComponentActivity() {
+class LicensesActivity : AppActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)

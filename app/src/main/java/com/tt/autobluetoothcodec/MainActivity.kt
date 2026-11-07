@@ -22,7 +22,6 @@ import android.os.Handler
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
@@ -167,7 +166,7 @@ internal interface MainScreenActions {
     fun unlink(address: String)
 }
 
-class MainActivity : ComponentActivity(), BluetoothProfile.ServiceListener {
+class MainActivity : AppActivity(), BluetoothProfile.ServiceListener {
     companion object {
         private const val TAG = "MainActivity"
         private const val COMPANION_TAG = "CompanionAssociation"

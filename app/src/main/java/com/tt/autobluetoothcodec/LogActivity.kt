@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.util.Log
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -115,7 +114,7 @@ import java.util.Locale
  *
  * Started with [EXTRA_LOG_FILE], it shows a log file instead, for example an export of another phone.
  */
-class LogActivity : ComponentActivity() {
+class LogActivity : AppActivity() {
     companion object {
         private const val TAG = "LogActivity"
 

@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
@@ -60,7 +59,7 @@ internal const val LICENSE_URL = "$REPOSITORY_URL/blob/master/LICENSE"
  * Shows the app's version, where its source is, its license, the way to the third-party licenses
  * and what happens to the user's data.
  */
-class AboutActivity : ComponentActivity() {
+class AboutActivity : AppActivity() {
     private val actions = object : AboutScreenActions {
         override fun back() = finish()
         override fun openUrl(url: String) = this@AboutActivity.openUrl(url)
