@@ -740,8 +740,8 @@ private val SHOW_UNCONFIGURABLE_OPTIONS = false
  * A chip of the codec's values. The selected one is filled in the inverse primary color, the theme's color at tone 80
  * in light mode and 40 in dark mode: a step stronger than Save's container, without outshouting the buttons. The
  * others are faintly outlined. While the device doesn't report the selected value yet, since a codec change is pending,
- * it's filled in the secondary color instead. The collapsed card's chips look like the selected ones, but can't be
- * chosen.
+ * it's filled in the secondary container color instead, lighter than the selected one in light mode. The collapsed card's
+ * chips look like the selected ones, but can't be chosen.
  */
 @Composable
 private fun ConfigChip(text: String, selected: Boolean, pending: Boolean, enabled: Boolean, clickable: Boolean,
@@ -752,12 +752,12 @@ private fun ConfigChip(text: String, selected: Boolean, pending: Boolean, enable
             shape = RoundedCornerShape(8.dp),
             color = when {
                 !selected -> Color.Transparent
-                pending -> scheme.secondary
+                pending -> scheme.secondaryContainer
                 else -> scheme.inversePrimary
             },
             contentColor = when {
                 !selected -> scheme.onSurfaceVariant
-                pending -> scheme.onSecondary
+                pending -> scheme.onSecondaryContainer
                 else -> scheme.onPrimaryContainer
             },
             border = if (selected) null else BorderStroke(1.dp, scheme.outlineVariant),
