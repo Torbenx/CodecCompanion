@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,10 +43,12 @@ class LicensesActivity : AppActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LicensesScreen(onBack: () -> Unit) {
+    val listState = rememberLazyListState()
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Third-party licenses") },
+                colors = topBarColors(scrolled = listState.canScrollBackward),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -61,6 +64,7 @@ internal fun LicensesScreen(onBack: () -> Unit) {
             val layoutDirection = LocalLayoutDirection.current
             LibrariesContainer(
                 Modifier.fillMaxSize(),
+                lazyListState = listState,
                 contentPadding = PaddingValues(
                     start = innerPadding.calculateStartPadding(layoutDirection) + side,
                     top = innerPadding.calculateTopPadding(),

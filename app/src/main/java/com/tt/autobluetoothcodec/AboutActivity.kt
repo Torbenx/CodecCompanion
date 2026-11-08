@@ -162,6 +162,7 @@ private fun LicenseDialog(onDismiss: () -> Unit) {
 @Composable
 internal fun AboutScreen(version: String, actions: AboutScreenActions) {
     var showLicense by rememberSaveable { mutableStateOf(false) }
+    val scroll = rememberScrollState()
     if (showLicense)
         LicenseDialog { showLicense = false }
     Scaffold(
@@ -170,6 +171,7 @@ internal fun AboutScreen(version: String, actions: AboutScreenActions) {
         topBar = {
             TopAppBar(
                 title = { Text("About") },
+                colors = topBarColors(scrolled = scroll.value > 0),
                 navigationIcon = {
                     IconButton(onClick = actions::back) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -183,7 +185,7 @@ internal fun AboutScreen(version: String, actions: AboutScreenActions) {
         // Padding inside the scroll container, so the content scrolls behind the navigation bar
         CappedContent(NARROW_CONTENT, tintSides = true) { side ->
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(innerPadding)
+                Modifier.fillMaxSize().verticalScroll(scroll).padding(innerPadding)
                     .padding(horizontal = side)
             ) {
                 Column(

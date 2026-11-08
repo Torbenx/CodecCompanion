@@ -16,10 +16,12 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runAndroidComposeUiTest
+import androidx.compose.ui.test.swipeUp
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -99,6 +101,11 @@ internal class PreviewScreenshots(private val shot: Shot) {
             Screens.log to ("Operation expanded" to { onNodeWithText("Codec chosen", substring = true).performClick() }),
             Screens.log to ("JSON shown" to {
                 onNodeWithText("Couldn't read the codec").performTouchInput { longClick() }
+            }),
+            // The bar is tinted while the content is scrolled under it. The about screen and the log fit on a phone.
+            Screens.licenses to ("Scrolled" to {
+                waitForLicenses()
+                onRoot().performTouchInput { swipeUp() }
             }),
             Screens.about to ("License dialog" to { onNodeWithTag("license").performScrollTo().performClick() }),
         )

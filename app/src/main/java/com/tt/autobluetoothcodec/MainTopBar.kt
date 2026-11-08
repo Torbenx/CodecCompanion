@@ -1,7 +1,6 @@
 package com.tt.autobluetoothcodec
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,7 +21,6 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,14 +61,12 @@ internal fun MainTopBar(
     actions: MainScreenActions,
 ) {
     var open by rememberSaveable { mutableStateOf(false) }
-    // Material's defaults for a scrolled and an unscrolled bar
-    val scheme = MaterialTheme.colorScheme
-    val color by animateColorAsState(if (scrolled) scheme.surfaceContainer else scheme.surface, label = "bar")
+    val color = topBarColor(scrolled)
     Column {
         TopAppBar(
             title = { ListToggle(list, open) { open = !open } },
             actions = { AppMenu(actions::openLog, actions::openAbout) },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = color, scrolledContainerColor = color)
+            colors = topBarColors(color)
         )
         AnimatedVisibility(open) {
             Surface(color = color) {

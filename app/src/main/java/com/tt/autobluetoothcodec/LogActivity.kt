@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -743,12 +744,16 @@ internal fun LogScreen(
     var showClearDialog by remember { mutableStateOf(false) }
     var showDisableDialog by remember { mutableStateOf(false) }
     val ownLog = fileName == null
+    val listState = rememberLazyListState()
+    // The list keeps where it was scrolled to after the log was cleared, which shows no list
+    val scrolled = !events.isNullOrEmpty() && listState.canScrollBackward
     Scaffold(
         // Lets UiAutomator find the elements by their test tags
         modifier = Modifier.semantics { testTagsAsResourceId = true },
         topBar = {
             TopAppBar(
                 title = { Text(fileName ?: "Log", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                colors = topBarColors(scrolled),
                 navigationIcon = {
                     IconButton(onClick = actions::back) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -803,6 +808,7 @@ internal fun LogScreen(
                 BoxWithConstraints {
                     CompositionLocalProvider(LocalTimeColumn provides timeColumnWidth(maxWidth - side * 2)) {
                         LazyColumn(
+                            state = listState,
                             contentPadding = PaddingValues(start = side, end = side, bottom = innerPadding.calculateBottomPadding()),
                             verticalArrangement = Arrangement.Top
                         ) {
