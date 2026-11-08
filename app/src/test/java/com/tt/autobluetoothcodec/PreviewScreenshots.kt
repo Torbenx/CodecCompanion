@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runAndroidComposeUiTest
 import org.junit.Assume.assumeTrue
@@ -99,6 +100,7 @@ internal class PreviewScreenshots(private val shot: Shot) {
             Screens.log to ("JSON shown" to {
                 onNodeWithText("Couldn't read the codec").performTouchInput { longClick() }
             }),
+            Screens.about to ("License dialog" to { onNodeWithTag("license").performScrollTo().performClick() }),
         )
 
         @JvmStatic

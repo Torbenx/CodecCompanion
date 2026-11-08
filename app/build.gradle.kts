@@ -74,10 +74,34 @@ android {
     }
 }
 
+/** Copies the app's own license into the raw resources, so the about screen shows the same text as the repository. */
+abstract class CopyLicenseTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val license: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val raw = outputDir.get().asFile.resolve("raw")
+        raw.deleteRecursively()
+        raw.mkdirs()
+        license.get().asFile.copyTo(raw.resolve("app_license.txt"))
+    }
+}
+
 androidComponents {
     // The UI tests use the example data in the debug source set, see SampleData
     beforeVariants(selector().withBuildType("release")) {
         it.enableUnitTest = false
+    }
+    onVariants { variant ->
+        val copyLicense = tasks.register<CopyLicenseTask>("copy${variant.name.replaceFirstChar { it.uppercase() }}License") {
+            license.set(rootProject.layout.projectDirectory.file("LICENSE"))
+        }
+        variant.sources.res?.addGeneratedSourceDirectory(copyLicense, CopyLicenseTask::outputDir)
     }
 }
 

@@ -1,6 +1,8 @@
 package com.tt.autobluetoothcodec
 
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -46,13 +48,27 @@ class AboutScreenTest {
         compose.onNodeWithTag("app_version").assertTextEquals("Version 1.0-abc1234")
         // Scrolled into view since the items may not fit on the screen
         compose.onNodeWithTag("source_code").performScrollTo().performClick()
-        compose.onNodeWithTag("license").performScrollTo().performClick()
         compose.onNodeWithTag("third_party_licenses").performScrollTo().performClick()
         compose.onNodeWithContentDescription("Back").performClick()
         assertEquals(
-            listOf("openUrl $REPOSITORY_URL", "openUrl $LICENSE_URL", "openLicenses", "back"),
+            listOf("openUrl $REPOSITORY_URL", "openLicenses", "back"),
             actions.calls
         )
+    }
+
+    @Test
+    fun theLicenseIsShownInTheApp() {
+        compose.setContent { AboutScreen("1.0", actions) }
+        compose.onNodeWithTag("license").performScrollTo().performClick()
+        compose.onNodeWithTag("license_title").assertIsDisplayed().assertTextEquals("MIT License")
+        // The repository's LICENSE, with its lines joined to paragraphs
+        compose.onNodeWithTag("license_text")
+            .assertTextContains("Copyright (c) 2026 Torben Thaysen", substring = true)
+            .assertTextContains("Permission is hereby granted, free of charge, to any person obtaining a copy of this",
+                substring = true)
+        compose.onNodeWithTag("close_license").performClick()
+        compose.onNodeWithTag("license_text").assertDoesNotExist()
+        assertEquals(emptyList<String>(), actions.calls)
     }
 
     @Test

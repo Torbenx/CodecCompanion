@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,9 +34,14 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -53,7 +59,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 
 internal const val REPOSITORY_URL = "https://github.com/Torbenx/AutoBluetoothCodec"
-internal const val LICENSE_URL = "$REPOSITORY_URL/blob/master/LICENSE"
 
 /**
  * Shows the app's version, where its source is, its license, the way to the third-party licenses
@@ -120,10 +125,45 @@ private fun AboutItem(title: String, summary: String, tag: String, onClick: () -
     )
 }
 
+/**
+ * The app's license as its title and its paragraphs. The file wraps its lines at a fixed width, which would break
+ * the lines a second time in the dialog, so each paragraph is joined to one line.
+ */
+internal fun licenseParagraphs(text: String): Pair<String, List<String>> {
+    // Also with Windows line endings, where git may have checked the file out with them
+    val paragraphs = text.trim().split(Regex("""\r?\n\s*\n""")).map { paragraph ->
+        paragraph.lines().joinToString(" ") { it.trim() }
+    }
+    return paragraphs.first() to paragraphs.drop(1)
+}
+
+/** The app's license, copied from the repository's LICENSE at build time, see app/build.gradle.kts. */
+@Composable
+private fun LicenseDialog(onDismiss: () -> Unit) {
+    val resources = LocalContext.current.resources
+    val (title, paragraphs) = remember(resources) {
+        licenseParagraphs(resources.openRawResource(R.raw.app_license).bufferedReader().use { it.readText() })
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("close_license")) { Text("OK") } },
+        title = { Text(title, Modifier.testTag("license_title")) },
+        text = {
+            Text(
+                paragraphs.joinToString("\n\n"),
+                modifier = Modifier.verticalScroll(rememberScrollState()).testTag("license_text")
+            )
+        }
+    )
+}
+
 /** The about screen, [version] is the app's version name. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 internal fun AboutScreen(version: String, actions: AboutScreenActions) {
+    var showLicense by rememberSaveable { mutableStateOf(false) }
+    if (showLicense)
+        LicenseDialog { showLicense = false }
     Scaffold(
         // Lets UiAutomator find the elements by their test tags
         modifier = Modifier.semantics { testTagsAsResourceId = true },
@@ -171,7 +211,7 @@ internal fun AboutScreen(version: String, actions: AboutScreenActions) {
                 AboutItem("Source code", REPOSITORY_URL.removePrefix("https://"), "source_code") {
                     actions.openUrl(REPOSITORY_URL)
                 }
-                AboutItem("License", "MIT License", "license") { actions.openUrl(LICENSE_URL) }
+                AboutItem("License", "MIT License", "license") { showLicense = true }
                 AboutItem("Third-party licenses", "The licenses of the libraries this app uses", "third_party_licenses") {
                     actions.openLicenses()
                 }
