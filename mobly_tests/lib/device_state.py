@@ -3,7 +3,7 @@
 Every function takes a Mobly AdbProxy, so the session script can pass
 AdbProxy(serial) and tests can pass an AndroidDevice's ad.adb.
 
-Checked on Android 9 and 12 (Pixel 3a) and 16 (Galaxy S24).
+Checked on Android 9 and 12 (Pixel 3a) and 16 and 17 (Galaxy S24).
 """
 
 import re
@@ -42,11 +42,20 @@ def bluetooth_state(adb):
     asked to turn on or off, this is the adapter's actual state.
     """
     # The full dump is almost 2 MB on the S24
-    out = shell(adb, "dumpsys bluetooth_manager | grep -m1 -E '^ *state:' || true")
-    match = re.search(r"state:\s*(\S+)", out)
-    if not match:
+    out = shell(adb, "dumpsys bluetooth_manager | grep -m1 -i -E '^ *state:' || true")
+    state = parse_bluetooth_state(out)
+    if state is None:
         raise RuntimeError(f"no Bluetooth state in dumpsys bluetooth_manager: {out!r}")
-    return match.group(1)
+    return state
+
+
+def parse_bluetooth_state(dump):
+    """The adapter's state from the status header of dumpsys bluetooth_manager, or None.
+
+    Up to API 36 the line is "state: ON", since API 37 "State:         ON".
+    """
+    match = re.search(r"^\s*state:\s*(\S+)", dump, re.MULTILINE | re.IGNORECASE)
+    return match.group(1) if match else None
 
 
 def is_bluetooth_on(adb):

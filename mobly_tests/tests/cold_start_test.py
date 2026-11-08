@@ -19,6 +19,7 @@ from lib import headset
 from lib.bt_oracle import Codec
 from lib.bt_oracle import same_format
 from lib.device_test import BaselineTest
+from lib.device_test import recorded
 
 SNIPPET = "snippet"
 SBC_44_16 = Codec(bt_oracle.SBC, 0x1, 0x1)
@@ -28,12 +29,14 @@ APPLY_TIMEOUT = 60.0
 # companion service was disabled
 APPEARANCE_TIMEOUT = 180.0
 
-# Characterization tests (D8), their results recorded per API level on the testbed (6.7).
+# Characterization tests (D8), their results recorded per range of API levels on the testbed (6.7),
+# see device_test.recorded().
 # C3: whether the preferred codec is applied when A2DP connects after the process was killed while
 # the device was present. On API 36 too since the manifest receiver is enabled there (D17).
-C3_APPLIED = {36: True}
-# C9: whether the preferred codec is applied when the device connects after a force stop.
-C9_FORCE_STOPPED_APPLIED = {28: False, 32: False, 36: True}
+C3_APPLIED = {(36, None): True}
+# C9: whether the preferred codec is applied when the device connects after a force stop. Recorded
+# on API 28, 32 and 36; 33 to 35 aren't.
+C9_FORCE_STOPPED_APPLIED = {(28, 32): False, (36, None): True}
 
 
 class ColdStartBase(BaselineTest):
@@ -202,7 +205,7 @@ class ColdStartTest(ColdStartBase):
         applied = dumped is not None and dumped.codec_type == codec.codec_type
         self.ad.log.info("C3 on API %d: process restarted by the system %s, applied %s, codec %s: %s",
                          self.sdk, restarted, applied, dumped, self.describe(ops))
-        expected = C3_APPLIED.get(self.sdk)
+        expected = recorded(C3_APPLIED, self.sdk)
         if expected is None:
             asserts.explicit_pass(f"recorded: applied {applied}, process restarted {restarted}; "
                                   f"add it to C3_APPLIED for API {self.sdk}")
@@ -306,7 +309,7 @@ class ColdStartTest(ColdStartBase):
         ops = app_log.operations(self.log.events_after(mark))
         self.ad.log.info("C9 force-stopped on API %d: applied %s, still stopped %s: %s",
                          self.sdk, applied, app.is_stopped(self.adb), self.describe(ops))
-        expected = C9_FORCE_STOPPED_APPLIED.get(self.sdk)
+        expected = recorded(C9_FORCE_STOPPED_APPLIED, self.sdk)
         if expected is None:
             asserts.explicit_pass(f"recorded: applied {applied}; add it to C9_FORCE_STOPPED_APPLIED for API {self.sdk}")
         asserts.assert_equal(expected, applied, f"applied after a force stop: {self.describe(ops)}")

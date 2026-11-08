@@ -19,6 +19,7 @@ from lib import headset
 from lib.bt_oracle import Codec
 from lib.bt_oracle import same_format
 from lib.device_test import BaselineTest
+from lib.device_test import recorded
 
 SNIPPET = "snippet"
 SBC_44_16 = Codec(bt_oracle.SBC, 0x1, 0x1)
@@ -28,8 +29,8 @@ RATE_ORDER = (0x1, 0x2, 0x4, 0x8)
 BITS_ORDER = (0x1, 0x2, 0x4)
 
 # Since API 33 B9 can see observing in dumpsys. Whether clearing the app's data keeps its link is
-# recorded per API level on the testbed (6.7).
-B9_LINK_KEPT_AFTER_CLEAR = {36: False}
+# recorded per range of API levels on the testbed (6.7), see device_test.recorded().
+B9_LINK_KEPT_AFTER_CLEAR = {(36, None): False}
 # B7: how a request can end when the phone's Bluetooth turns off during it, depending on whether
 # the profile or the device's connection goes first. On the S24 either does.
 B7_OFF_DURING_REQUEST = ("PROFILE_DISCONNECTED", "NOT_CONNECTED")
@@ -309,7 +310,7 @@ class BtLogicTest(SnippetTest):
         app.launch(self.adb)
         wait_observing(False, "after the next start")
         app.go_home(self.adb)
-        expected = B9_LINK_KEPT_AFTER_CLEAR.get(self.sdk)
+        expected = recorded(B9_LINK_KEPT_AFTER_CLEAR, self.sdk)
         if expected is None:
             asserts.explicit_pass(f"recorded: the link is {'kept' if linked else 'removed'}; "
                                   f"add it to B9_LINK_KEPT_AFTER_CLEAR for API {self.sdk}")

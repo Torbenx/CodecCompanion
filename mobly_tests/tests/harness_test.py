@@ -15,7 +15,7 @@ from mobly import records
 from mobly import signals
 
 import run_suite
-from lib import app, app_log, baseline, bt_oracle, companion, device_test, lock_screen, sim_helper
+from lib import app, app_log, baseline, bt_oracle, companion, device_state, device_test, lock_screen, sim_helper
 
 MOBLY_TESTS = pathlib.Path(__file__).resolve().parents[1]
 TESTDATA = MOBLY_TESTS / "testdata"
@@ -57,6 +57,18 @@ class BtOracleTest(unittest.TestCase):
         self.assertEqual("XX:XX:XX:XX:4E:5F", device.address)
         # Set by the app, with the highest priority
         self.assertEqual(1000000, device.codec.priority)
+
+    def test_api37_hasTheNewStatusHeader(self):
+        device = self.check_connected("api37_connected.txt", bt_oracle.Codec(bt_oracle.LDAC, 0x1, 0x2, codec_specific1=10),
+                                      [bt_oracle.LDAC, bt_oracle.APTX, bt_oracle.AAC, bt_oracle.SBC])
+        self.assertEqual("XX:XX:XX:XX:4E:5F", device.address)
+
+    def test_adapterState(self):
+        self.assertEqual("ON", device_state.parse_bluetooth_state("  state: ON"))
+        self.assertEqual("BLE_ON", device_state.parse_bluetooth_state("  State:         BLE_ON"))
+        # Only the adapter's line, not the state machines'
+        self.assertIsNone(device_state.parse_bluetooth_state("  State Machine State: INIT\n"))
+        self.assertIsNone(device_state.parse_bluetooth_state(""))
 
     def test_sameDevice(self):
         self.assertTrue(bt_oracle.same_device("XX:XX:XX:XX:4E:5F", "0a:1b:2c:3d:4e:5f"))
@@ -105,6 +117,12 @@ class CompanionTest(unittest.TestCase):
     def test_listOn36HasIds(self):
         self.assertEqual([companion.Association(app.PACKAGE, QUDELIX, 7)],
                          companion.parse_list(read("companiondevice", "api36_list.txt")))
+
+    def test_listSince37IsTheAssociations(self):
+        self.assertEqual([companion.Association(app.PACKAGE, QUDELIX, 7), companion.Association("com.example.other", QUDELIX, 5)],
+                         companion.parse_list(read("companiondevice", "api37_list.txt")))
+        # Removed associations have no address
+        self.assertEqual([], companion.parse_list("Association{mId=6, mUserId=0, mPackageName='p', mDeviceMacAddress=null, mDisplayName='x'}"))
 
     def test_observingAndPresence(self):
         dump = read("companiondevice", "api36_dumpsys.txt")
@@ -248,6 +266,17 @@ class AutoRevokeTest(unittest.TestCase):
 
     def test_api28HasNoSuchOp(self):
         self.assertIsNone(app.parse_auto_revoke_mode("Error: Unknown operation string: AUTO_REVOKE_PERMISSIONS_IF_UNUSED\n"))
+
+
+class RecordedTest(unittest.TestCase):
+    def test_laterLevelsBehaveLikeTheLatestRecorded(self):
+        ranges = {(28, 32): False, (36, None): True}
+        self.assertFalse(device_test.recorded(ranges, 28))
+        self.assertFalse(device_test.recorded(ranges, 32))
+        self.assertIsNone(device_test.recorded(ranges, 27))
+        self.assertIsNone(device_test.recorded(ranges, 33))
+        self.assertTrue(device_test.recorded(ranges, 36))
+        self.assertTrue(device_test.recorded(ranges, 37))
 
 
 class NotRunTest(unittest.TestCase):

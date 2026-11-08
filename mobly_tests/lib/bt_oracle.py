@@ -6,11 +6,11 @@ code. Every function takes a Mobly AdbProxy, like device_state.
 The A2DP service section differs per API level:
   * API 28 lists each device as "mDevice: ADDRESS" with a state machine line
     "state=Connected", and its capabilities only in the state machine log.
-  * API 32 and 36 have an "=== A2dpStateMachine for ADDRESS ===" block with
-    "mConnectionState: CONNECTED" (STATE_CONNECTED on 36) and a list of
+  * API 32 and later have an "=== A2dpStateMachine for ADDRESS ===" block with
+    "mConnectionState: CONNECTED" (STATE_CONNECTED since 36) and a list of
     "mCodecsSelectableCapabilities".
-  * API 36 masks addresses as XX:XX:XX:XX:4E:5F, so devices are matched by
-    their last two bytes there.
+  * API 36 and later mask addresses as XX:XX:XX:XX:4E:5F, so devices are
+    matched by their last two bytes there.
 """
 
 import dataclasses
@@ -97,7 +97,7 @@ class Capability:
 @dataclasses.dataclass(frozen=True)
 class DeviceState:
     address: str
-    """As dumped, masked on API 36."""
+    """As dumped, masked since API 36."""
     connected: bool
     codec: Codec | None
     capabilities: tuple[Capability, ...]
@@ -208,7 +208,6 @@ def _parse_block_28(address, block):
 
 def parse(dump):
     """Parses the output of DUMP_COMMAND, or the full dump."""
-    adapter = re.search(r"^\s*state: (\S+)", dump, re.MULTILINE)
     start = dump.find("Profile: A2dpService")
     section = ""
     if start >= 0:
@@ -227,7 +226,7 @@ def parse(dump):
             end = blocks_28[i + 1].start() if i + 1 < len(blocks_28) else len(section)
             devices.append(_parse_block_28(match.group(1), section[match.end():end]))
     return A2dpState(
-        adapter_state=adapter.group(1) if adapter else None,
+        adapter_state=device_state.parse_bluetooth_state(dump),
         active_device=active.group(1) if active and active.group(1) != "null" else None,
         devices=tuple(devices),
     )

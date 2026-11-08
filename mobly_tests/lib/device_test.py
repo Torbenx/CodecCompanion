@@ -40,6 +40,18 @@ def is_not_applicable(record):
     return record.termination_signal_type == NotApplicable.__name__
 
 
+def recorded(ranges, sdk):
+    """The outcome a characterization test recorded for API level [sdk] (6.7), or None if there is none.
+
+    [ranges] maps (first, last) API levels, both included, to the outcome. A last of None covers every
+    later level: a newer Android is expected to behave like the latest one recorded.
+    """
+    for (first, last), outcome in ranges.items():
+        if first <= sdk and (last is None or sdk <= last):
+            return outcome
+    return None
+
+
 def is_failing():
     """Whether the test is failing, asked from teardown_test.
 

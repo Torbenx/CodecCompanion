@@ -33,7 +33,7 @@ between the app and the system, which unit tests can't see.
 | --- | --- | --- | --- | --- |
 | Pixel 3a | `0000000028` | 9 | 28 | Rooted, pure test device, clock set to 2019 |
 | Pixel 3a | `0000000032` | 12L | **32** | Rooted, pure test device |
-| Galaxy S24 | `R0000000036` | 16 | 36 | Not rooted, personal phone with a known PIN, Samsung Bluetooth stack |
+| Galaxy S24 | `R0000000036` | 17 | 37 | Not rooted, personal phone with a known PIN, Samsung Bluetooth stack. API 36 (Android 16) until November 2026 |
 
 | Headset | Address | Controlled by |
 | --- | --- | --- |
@@ -189,10 +189,12 @@ Pitfalls the harness has to handle:
 - `dumpsys bluetooth_manager` has several per-device tables, like the AVRCP
   volume table with its own connection column. The A2DP connection and codec
   come from the A2DP service section only. Its format differs: API 28 has an
-  `mDevice:` line and `state=Connected`, API 32 and 36 have an
+  `mDevice:` line and `state=Connected`, API 32 and later have an
   `A2dpStateMachine for …` block with `mConnectionState: CONNECTED` and
-  `STATE_CONNECTED`. API 36 masks addresses as `XX:XX:XX:XX:4E:5F`, so there
-  the device is matched by its last two bytes.
+  `STATE_CONNECTED`. Since API 36 addresses are masked as `XX:XX:XX:XX:4E:5F`,
+  so there the device is matched by its last two bytes. The status header
+  has the adapter's state as `state: ON` up to API 36 and as
+  `State:         ON` since API 37.
 - The device usually appears before A2DP connects, so since D23
   `DEVICE_APPEARED` is a standalone event and the service applies nothing
   until A2DP connects. On API 31/32 it appears when its BLE advertisements
@@ -673,10 +675,11 @@ phone isn't known in advance, like what `pm clear` does to the link in B9.
 
 Each starts as an observation. The first run on each phone records what
 happens: the operations in the log with their resolutions, and `dumpsys`. That
-result is written into the test as its expectation, keyed by API level and,
-where it differs, by headset backend. A later run that differs fails, so a
-change in the app or a new Android version shows up as a difference someone
-decides about. The component tests (K5) describe the same behaviour from the
+result is written into the test as its expectation, keyed by a range of API
+levels and, where it differs, by headset backend. The latest range is open
+ended: a newer Android version is expected to behave like the latest one
+recorded. A later run that differs fails, so a change in the app or a new
+Android version shows up as a difference someone decides about. The component tests (K5) describe the same behaviour from the
 code's side.
 
 ### 6.8 On failure
@@ -1009,9 +1012,12 @@ Checked on 2026-10-27, while writing this concept and in the spike (step 1):
   the Qudelix over BLE. The app's log has `DEVICE_APPEARED` and
   `DEVICE_DISAPPEARED` every 15–20 s, each operation resolving
   `PROFILE_UNAVAILABLE`.
+- Espresso 3.5.1 fails every UI test on API 37: it calls the removed
+  `InputManager.getInstance()`. 3.7.0 works.
 - `cmd companiondevice` offers `list`, `associate` and `disassociate` on API 28
   and 32; associating works on 28. Its `list` output differs on API 36 (a
-  table with ids and lower case addresses). `cmd bluetooth_manager` doesn't
+  table with ids and lower case addresses) and on API 37 (each association's
+  `Association{…}` record, like `dumpsys companiondevice`). `cmd bluetooth_manager` doesn't
   exist on API 28 and 32; on the S24 it only switches the adapter and its BLE
   mode.
 - The snippet loads on every phone, shares the app's class loader, restarts

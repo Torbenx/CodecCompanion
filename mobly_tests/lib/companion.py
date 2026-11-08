@@ -1,7 +1,8 @@
 """Companion device links and observing, from cmd companiondevice and dumpsys.
 
-`cmd companiondevice list` prints "PACKAGE ADDRESS" lines up to API 35 and a
-table with association ids and lower case addresses on API 36. Observing is
+`cmd companiondevice list` prints "PACKAGE ADDRESS" lines up to API 35, a
+table with association ids and lower case addresses on API 36, and since
+API 37 the associations as dumpsys companiondevice shows them. Observing is
 shown by dumpsys companiondevice since API 33 (mNotifyOnDeviceNearby); API 31
 and 32 show it nowhere, not even in the system's associations file.
 """
@@ -21,13 +22,17 @@ class Association:
     address: str
     """Upper case."""
     id: int | None = None
-    """Only listed on API 36."""
+    """Only listed since API 36."""
 
 
 def parse_list(output):
     """Parses `cmd companiondevice list USER`."""
     associations = []
     for line in output.splitlines():
+        record = re.match(r"^\s*Association\{mId=(\d+),.*?mPackageName='([^']*)', mDeviceMacAddress=([0-9A-Fa-f:]{17}),", line)
+        if record:
+            associations.append(Association(record.group(2), record.group(3).upper(), int(record.group(1))))
+            continue
         table = re.match(r"^\s*(\d+)\s*\|\s*(\S+)\s*\|\s*([0-9A-Fa-f:]{17})\s*$", line)
         if table:
             associations.append(Association(table.group(2), table.group(3).upper(), int(table.group(1))))
