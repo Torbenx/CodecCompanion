@@ -2,8 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Up to API 30 the A2DP profile calls are guarded by the legacy BLUETOOTH permission -->
+    <!-- Up to API 30 the A2DP profile calls are guarded by the legacy BLUETOOTH permission. Samsung's
+         API 30 also requires BLUETOOTH_ADMIN to change the codec, and since that call is oneway the
+         app never sees the SecurityException, the codec just doesn't change. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <!-- Since API 33 the system binds CodecCompanionService while an associated device is present -->
     <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE"/>

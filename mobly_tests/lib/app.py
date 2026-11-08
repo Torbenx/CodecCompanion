@@ -40,6 +40,10 @@ def installed_version(adb, package=PACKAGE):
     return match.group(1) if match else None
 
 
+def is_installed(adb, package=PACKAGE):
+    return device_state.shell(adb, f"pm path {package} || true").startswith("package:")
+
+
 INSTALL_TIMEOUT = 180
 
 
@@ -76,19 +80,35 @@ def is_running(adb):
     return pid(adb) is not None
 
 
-def kill(adb, timeout=10.0):
+class CantKill(RuntimeError):
+    """The phone can't end the app's process like the system does: no root, and run-as isn't allowed to."""
+
+
+def kill(adb, timeout=10.0, once_cached=True):
     """Ends the app's process like the system does, without stopping the package.
 
-    run-as works without root on the S24. On the API 32 Pixel it can't see the
-    app's process ("unknown pid"), so it needs root there.
+    run-as works without root on the S24. On the API 32 Pixel and the A50's
+    API 30, SELinux doesn't let it signal the app's process, which toybox's
+    kill reports as "unknown pid", so it needs root there. Without root the
+    process is ended with `am kill` once it's cached, like the system ends idle
+    ones, unless [once_cached] is false; if it doesn't get cached in time, or
+    [once_cached] is false, this raises CantKill.
     """
     end = time.time() + timeout
     while (process := pid(adb)) is not None:
         out = device_state.shell(adb, f"run-as {PACKAGE} kill -9 {process} 2>&1 || true")
         if "unknown pid" in out or "denied" in out.lower():
-            if not device_state.has_su(adb):
-                raise RuntimeError(f"can't end the app's process without root: {out.strip()}")
-            device_state.shell(adb, f"su -c 'kill -9 {process}' || true")
+            if device_state.has_su(adb):
+                device_state.shell(adb, f"su -c 'kill -9 {process}' || true")
+            elif not once_cached:
+                raise CantKill(f"can't end the busy app's process without root, run-as said {out.strip()!r}")
+            else:
+                try:
+                    kill_cached(adb, timeout=max(1.0, end - time.time()))
+                except TimeoutError as e:
+                    raise CantKill(f"can't end the app's process without root, run-as said "
+                                   f"{out.strip()!r}, and {e}") from None
+                return
         if time.time() >= end:
             raise TimeoutError(f"the app's process {process} is still running")
         time.sleep(0.2)
@@ -165,8 +185,7 @@ def data_files(adb):
     return [line for line in out.splitlines() if line]
 
 
-def sdk(adb):
-    return int(device_state.shell(adb, "getprop ro.build.version.sdk"))
+sdk = device_state.sdk
 
 
 def permission_state(adb):

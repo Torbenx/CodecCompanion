@@ -1,0 +1,53 @@
+Bluetooth Status
+  enabled: true
+  state: ON
+  address: 0A:1B:2C:00:00:30
+  name: test phone
+  time since enabled: 00:01:44.705
+
+Enable log:
+Profile: A2dpService
+  mActiveDevice: 0A:1B:2C:3D:4E:5F
+  mMaxConnectedAudioDevices: 2
+  codecConfigPriorities:
+    SBC: 1001
+    AAC: 2001
+    aptX: 3001
+    aptX HD: -1
+    LDAC: 5001
+    SSC: 6001
+  mA2dpOffloadEnabled: false
+  mNotifiedConnectedDevices:
+    3D:4
+  mDualPlayMode: false
+  === A2dpStateMachine for 3D:4 ===
+    getConnectionPolicy: 100
+    mConnectionState: CONNECTED, mLastConnectionState: CONNECTING
+    mIsPlaying: false
+    mDelayReport: 380
+    getSupportsOptionalCodecs: 1, getOptionalCodecsEnabled: 1
+    mCodecConfig: {codecName:aptX,mCodecType:2,mCodecPriority:3001,mSampleRate:0x1(44100),mBitsPerSample:0x1(16),mChannelMode:0x2(STEREO),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    mCodecsSelectableCapabilities:
+      {codecName:aptX,mCodecType:2,mCodecPriority:3001,mSampleRate:0x1(44100),mBitsPerSample:0x1(16),mChannelMode:0x2(STEREO),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+      {codecName:AAC,mCodecType:1,mCodecPriority:2001,mSampleRate:0x1(44100),mBitsPerSample:0x1(16),mChannelMode:0x2(STEREO),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+      {codecName:SBC,mCodecType:0,mCodecPriority:1001,mSampleRate:0x1(44100),mBitsPerSample:0x1(16),mChannelMode:0x3(MONO|STEREO),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+      {codecName:LDAC,mCodecType:4,mCodecPriority:5001,mSampleRate:0xf(44100|48000|88200|96000),mBitsPerSample:0x7(16|24|32),mChannelMode:0x2(STEREO),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    StateMachine: name=A2dpStateMachine state=Connected
+    StateMachineLog:
+      A2dpStateMachine:
+       total records=12
+       rec[0]: time=11-08 18:13:40.854 processed=Disconnected org=Disconnected dest=Connecting what=1(0x1) CONNECT: arg1=0, arg2=0, obj=null
+       rec[1]: time=11-08 18:13:42.279 processed=Connecting org=Connecting dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_CONNECTION_STATE_CHANGED, device:0A:1B:2C:3D:4E:5F, value1:CONNECTING}
+       rec[2]: time=11-08 18:13:42.522 processed=Connecting org=Connecting dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_CODEC_CONFIG_CHANGED, device:0A:1B:2C:3D:4E:5F, value1:48}
+       rec[3]: time=11-08 18:13:42.522 processed=Connecting org=Connecting dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_UNKNOWN:9, device:0A:1B:2C:3D:4E:5F, value1:4650}
+       rec[4]: time=11-08 18:13:42.530 processed=Connecting org=Connecting dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_AUDIO_DELAY_REPORTED, device:0A:1B:2C:3D:4E:5F, value1:3800}
+       rec[5]: time=11-08 18:13:42.567 processed=Connecting org=Connecting dest=Connected what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_CONNECTION_STATE_CHANGED, device:0A:1B:2C:3D:4E:5F, value1:CONNECTED}
+       rec[6]: time=11-08 18:13:42.596 processed=Connected org=Connected dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_CODEC_CONFIG_CHANGED, device:0A:1B:2C:3D:4E:5F, value1:48}
+       rec[7]: time=11-08 18:13:42.597 processed=Connected org=Connected dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_CODEC_CONFIG_CHANGED, device:0A:1B:2C:3D:4E:5F, value1:48}
+       rec[8]: time=11-08 18:13:42.621 processed=Connected org=Connected dest=<null> what=302(0x12e) DISABLE_LDAC: arg1=0, arg2=0, obj=null
+       rec[9]: time=11-08 18:13:42.623 processed=Connected org=Connected dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_CODEC_CONFIG_CHANGED, device:0A:1B:2C:3D:4E:5F, value1:6}
+       rec[10]: time=11-08 18:13:42.624 processed=Connected org=Connected dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_CODEC_CONFIG_CHANGED, device:0A:1B:2C:3D:4E:5F, value1:6}
+       rec[11]: time=11-08 18:13:42.807 processed=Connected org=Connected dest=<null> what=101(0x65) STACK_EVENT: arg1=0, arg2=0, obj=A2dpStackEvent {type:EVENT_TYPE_AUDIO_DELAY_REPORTED, device:0A:1B:2C:3D:4E:5F, value1:3800}
+      curState=Connected
+
+Profile: BluetoothHidHostService

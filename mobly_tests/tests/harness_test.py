@@ -46,6 +46,13 @@ class BtOracleTest(unittest.TestCase):
                                       [bt_oracle.LDAC, bt_oracle.APTX_HD, bt_oracle.APTX, bt_oracle.AAC, bt_oracle.SBC])
         self.assertTrue(device.capabilities[0].supports(0x8, 0x4))
 
+    def test_api30Samsung_matchesShortAddresses(self):
+        # Samsung turned LDAC off when it connected, the phone's own choice is aptX
+        device = self.check_connected("api30_samsung_connected.txt", bt_oracle.Codec(bt_oracle.APTX, 0x1, 0x1),
+                                      [bt_oracle.APTX, bt_oracle.AAC, bt_oracle.SBC, bt_oracle.LDAC])
+        self.assertEqual("XX:XX:XX:3D:4X:XX", device.address)
+        self.assertTrue(device.capabilities[3].supports(0x8, 0x4))
+
     def test_api32(self):
         device = self.check_connected("api32_connected.txt", bt_oracle.Codec(bt_oracle.LDAC, 0x8, 0x4),
                                       [bt_oracle.LDAC, bt_oracle.APTX_HD, bt_oracle.APTX, bt_oracle.AAC, bt_oracle.SBC])
@@ -70,6 +77,24 @@ class BtOracleTest(unittest.TestCase):
         # Only the adapter's line, not the state machines'
         self.assertIsNone(device_state.parse_bluetooth_state("  State Machine State: INIT\n"))
         self.assertIsNone(device_state.parse_bluetooth_state(""))
+
+    def test_broadcastResult(self):
+        self.assertEqual(1, device_state.parse_broadcast_result(
+            "Broadcasting: Intent { flg=0x400000 cmp=com.tt.autobluetoothcodec.snippet/.BluetoothSwitch (has extras) }\n"
+            "Broadcast completed: result=1"))
+        # What nothing receiving it looks like
+        self.assertEqual(0, device_state.parse_broadcast_result(
+            "Broadcasting: Intent { flg=0x400000 cmp=com.tt.autobluetoothcodec.snippet/.BluetoothSwitch (has extras) }\n"
+            "Broadcast completed: result=0"))
+        self.assertEqual(2, device_state.parse_broadcast_result("Broadcast completed: result=2, data=\"no Bluetooth adapter\""))
+        self.assertIsNone(device_state.parse_broadcast_result("Security exception: Permission Denial: ..."))
+
+    def test_wakefulness(self):
+        self.assertEqual("Awake", device_state.parse_wakefulness("  mWakefulness=Awake"))
+        # The Galaxy A50 on Android 11
+        self.assertEqual("Asleep", device_state.parse_wakefulness("  getWakefulnessLocked()=Asleep\n"))
+        self.assertIsNone(device_state.parse_wakefulness("  mWakefulnessChanging=false"))
+        self.assertIsNone(device_state.parse_wakefulness(""))
 
     def test_sameDevice(self):
         self.assertTrue(bt_oracle.same_device("XX:XX:XX:XX:4E:5F", "0a:1b:2c:3d:4e:5f"))

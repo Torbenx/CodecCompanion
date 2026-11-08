@@ -37,6 +37,7 @@ import time
 from mobly.controllers import android_device
 from mobly.controllers.android_device_lib.adb import AdbError, AdbProxy, AdbTimeoutError
 
+from lib import app
 from lib import device_state
 
 DEFAULT_STATE_FILE = pathlib.Path(__file__).resolve().parent / ".session_state.json"
@@ -91,7 +92,19 @@ def save_originals(phone, state, settings):
     state.save()
 
 
+def install_bluetooth_switch(phone):
+    """Installs the snippet APK where switching Bluetooth needs it, unless it's installed already."""
+    if not device_state.needs_bluetooth_switch(phone.adb) or app.is_installed(phone.adb, app.SNIPPET_PACKAGE):
+        return
+    if not app.SNIPPET_APK.exists():
+        raise RuntimeError(f"{phone.name} needs the snippet APK to switch Bluetooth, "
+                           f"build it first: gradlew :snippet:assembleDebug")
+    print(f"Installing the snippet APK on {phone.name}, to switch its Bluetooth")
+    app.install(phone.adb, app.SNIPPET_APK)
+
+
 def prepare(phone, brightness):
+    install_bluetooth_switch(phone)
     device_state.set_bluetooth(phone.adb, False)
     device_state.put_setting(phone.adb, *STAY_ON, device_state.STAY_ON_ALL_CHARGERS)
     if brightness is not None:

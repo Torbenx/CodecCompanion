@@ -19,6 +19,7 @@ from lib import headset
 from lib.bt_oracle import Codec
 from lib.bt_oracle import same_format
 from lib.device_test import BaselineTest
+from lib.device_test import NotApplicable
 from lib.device_test import recorded
 
 SNIPPET = "snippet"
@@ -46,6 +47,14 @@ C9_FORCE_STOPPED_APPLIED = {(28, 32): False, (36, None): True}
 class ColdStartBase(BaselineTest):
     """The helpers of the L4 tests, also for the reboot tests."""
 
+    def kill_app(self, once_cached=True):
+        """Ends the app's process like the system does, see app.kill(). A phone that can't is not
+        applicable to the test."""
+        try:
+            app.kill(self.adb, once_cached=once_cached)
+        except app.CantKill as e:
+            raise NotApplicable(str(e)) from None
+
     @property
     def address(self):
         return self.headset.address
@@ -65,7 +74,7 @@ class ColdStartBase(BaselineTest):
             self.wait_until_resolved(timeout=15)
         finally:
             self.ad.unload_snippet(SNIPPET)
-        app.kill(self.adb)
+        self.kill_app()
 
     def wait_for_applied(self, after, codec, timeout=APPLY_TIMEOUT):
         """Waits until A2DP uses [codec] and an operation after seq [after] verified it, returns the operations.
@@ -152,7 +161,7 @@ class ColdStartTest(ColdStartBase):
         self.check_last_connected(off, "the disconnect")
         # Since API 33 the system unbinds the service once the device is gone, after some seconds
         time.sleep(15)
-        app.kill(self.adb)
+        self.kill_app()
         time.sleep(3)
         asserts.assert_false(app.is_running(self.adb), "the system started the app's process again")
         mark = self.log.last_seq()
@@ -203,7 +212,7 @@ class ColdStartTest(ColdStartBase):
         # Seen through BLE scans or the link
         appeared = self.log.wait_for_event("DEVICE_APPEARED", after=mark, device=self.address, timeout=APPEARANCE_TIMEOUT)
         self.ad.log.info("C3: %s", appeared)
-        app.kill(self.adb)
+        self.kill_app()
         time.sleep(5)
         restarted = app.is_running(self.adb)
         mark = self.log.last_seq()
@@ -230,7 +239,8 @@ class ColdStartTest(ColdStartBase):
         mark = self.log.last_seq()
         self.headset.reconnect(self.adb)
         op = self.wait_until_applying(mark)
-        app.kill(self.adb)
+        # Right away: a busy process isn't cached until the operation is over
+        self.kill_app(once_cached=False)
         # The label starts the process, which repairs the log when it loads it
         self.log.label("C4 next start")
         events = self.wait_until_resolved()
@@ -266,7 +276,7 @@ class ColdStartTest(ColdStartBase):
     def test_c6_no_preferred_codec(self):
         """Without a preferred codec the codec isn't touched and nothing is logged or noted. The manifest
         receiver starts the process and returns."""
-        app.kill(self.adb)
+        self.kill_app()
         mark = self.log.last_seq()
         self.headset.reconnect(self.adb)
         bt_oracle.wait_connected(self.adb, self.address, timeout=baseline.CONNECT_TIMEOUT)

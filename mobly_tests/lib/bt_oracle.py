@@ -11,6 +11,9 @@ The A2DP service section differs per API level:
     "mCodecsSelectableCapabilities".
   * API 36 and later mask addresses as XX:XX:XX:XX:4E:5F, so devices are
     matched by their last two bytes there.
+  * Samsung's API 30 has the API 32 blocks, but names the device in them by
+    a part of its address, "=== A2dpStateMachine for 3D:4 ===", which is
+    matched as XX:XX:XX:3D:4X:XX.
 """
 
 import dataclasses
@@ -29,6 +32,15 @@ _CODEC = re.compile(
     r"mCodecSpecific1:(?P<cs1>-?\d+),mCodecSpecific2:(?P<cs2>-?\d+),"
     r"mCodecSpecific3:(?P<cs3>-?\d+),mCodecSpecific4:(?P<cs4>-?\d+)\}")
 _ADDRESS = r"[0-9A-FX]{2}(?::[0-9A-FX]{2}){5}"
+# Samsung's state machines name a device by characters 9 to 12 of its address: 3D:4 for 0A:1B:2C:3D:4E:5F
+_SAMSUNG_SHORT_ADDRESS = r"[0-9A-F]{2}:[0-9A-F]"
+
+
+def _expand_short_address(address):
+    """[address], or Samsung's short form of it as a masked address, XX:XX:XX:3D:4X:XX."""
+    if re.fullmatch(_SAMSUNG_SHORT_ADDRESS, address, re.IGNORECASE):
+        return f"XX:XX:XX:{address}X:XX"
+    return address
 
 # The app's CodecConfig constants, which are Android's
 SBC, AAC, APTX, APTX_HD, LDAC, OPUS = 0, 1, 2, 3, 4, 6
@@ -215,11 +227,11 @@ def parse(dump):
         section = dump[start:end if end >= 0 else len(dump)]
     active = re.search(rf"mActiveDevice: ({_ADDRESS}|null)", section)
     devices = []
-    blocks_32 = list(re.finditer(rf"=== A2dpStateMachine for ({_ADDRESS})[^=]*===", section))
+    blocks_32 = list(re.finditer(rf"=== A2dpStateMachine for ({_ADDRESS}|{_SAMSUNG_SHORT_ADDRESS})[^=]*===", section))
     if blocks_32:
         for i, match in enumerate(blocks_32):
             end = blocks_32[i + 1].start() if i + 1 < len(blocks_32) else len(section)
-            devices.append(_parse_block_32(match.group(1), section[match.end():end]))
+            devices.append(_parse_block_32(_expand_short_address(match.group(1)), section[match.end():end]))
     else:
         blocks_28 = list(re.finditer(rf"^  mDevice: ({_ADDRESS})", section, re.MULTILINE))
         for i, match in enumerate(blocks_28):

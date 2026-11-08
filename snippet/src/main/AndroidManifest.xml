@@ -1,10 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- For BluetoothSwitch, which switches Bluetooth where the shell can't. Apps can't since API 33,
+         and API 31 and 32 would need BLUETOOTH_CONNECT. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+
     <application>
         <meta-data
             android:name="mobly-snippets"
             android:value="com.tt.autobluetoothcodec.snippet.AppSnippet" />
+
+        <!-- Only the shell and the system hold DUMP -->
+        <receiver
+            android:name=".BluetoothSwitch"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
     </application>
 
 </manifest>

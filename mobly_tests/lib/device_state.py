@@ -3,7 +3,7 @@
 Every function takes a Mobly AdbProxy, so the session script can pass
 AdbProxy(serial) and tests can pass an AndroidDevice's ad.adb.
 
-Checked on Android 9 and 12 (Pixel 3a) and 16 and 17 (Galaxy S24).
+Checked on Android 9 and 12 (Pixel 3a), 11 (Galaxy A50) and 16 and 17 (Galaxy S24).
 """
 
 import re
@@ -11,6 +11,10 @@ import time
 
 # Keeps the screen on while the phone is plugged in to AC, USB or a wireless charger
 STAY_ON_ALL_CHARGERS = "7"
+
+# The snippet's receiver that switches Bluetooth where the shell isn't allowed to, and up to which API it can
+BLUETOOTH_SWITCH = "com.tt.autobluetoothcodec.snippet/.BluetoothSwitch"
+BLUETOOTH_SWITCH_MAX_SDK = 30
 
 
 def shell(adb, command, timeout=15):
@@ -67,18 +71,52 @@ def has_su(adb):
     return shell(adb, "command -v su || true") != ""
 
 
+def sdk(adb):
+    return int(shell(adb, "getprop ro.build.version.sdk"))
+
+
+def needs_bluetooth_switch(adb):
+    """Whether set_bluetooth() switches Bluetooth with the snippet's BluetoothSwitch on this phone."""
+    return not has_su(adb) and sdk(adb) <= BLUETOOTH_SWITCH_MAX_SDK
+
+
+def switch_bluetooth_with_snippet(adb, on):
+    """Asks the snippet's BluetoothSwitch to turn Bluetooth on or off, without waiting for it."""
+    # The background queue held it for over 10 s once, behind the broadcasts of a Bluetooth change
+    out = shell(adb, f"am broadcast --receiver-foreground -n {BLUETOOTH_SWITCH} --ez on {'true' if on else 'false'}",
+                timeout=45)
+    result = parse_broadcast_result(out)
+    # BluetoothSwitch.RESULT_ACCEPTED; a broadcast nothing received completes with 0
+    if result == 0:
+        raise RuntimeError(f"nothing received {BLUETOOTH_SWITCH}, is the snippet APK "
+                           f"({BLUETOOTH_SWITCH.split('/')[0]}) installed? {out!r}")
+    if result != 1:
+        raise RuntimeError(f"{BLUETOOTH_SWITCH} couldn't turn Bluetooth {'on' if on else 'off'}: {out!r}")
+
+
+def parse_broadcast_result(output):
+    """The result code am broadcast printed, or None if there's none."""
+    match = re.search(r"^Broadcast completed: result=(-?\d+)", output, re.MULTILINE)
+    return int(match.group(1)) if match else None
+
+
 def set_bluetooth(adb, on, timeout=20.0):
     """Turns Bluetooth on or off and waits until the adapter has finished.
 
-    On Android 9 the adb shell isn't allowed to, so this uses su where it's
-    available, like on the rooted Pixels. svc's exit code doesn't tell whether
-    it worked: on Android 12 it's 137 (killed) even when it did.
+    On Android 9, and on the Galaxy A50's Android 11, the adb shell isn't
+    allowed to. So this uses su where it's available, like on the rooted
+    Pixels, and otherwise up to API 30 the snippet's BluetoothSwitch, which
+    needs the snippet APK installed. svc's exit code doesn't tell whether it
+    worked: on Android 12 it's 137 (killed) even when it did.
     """
     target = ("ON",) if on else ("OFF", "BLE_ON")
     command = f"svc bluetooth {'enable' if on else 'disable'}"
     if has_su(adb):
-        command = f"su -c '{command}'"
-    shell(adb, f"{command} || true")
+        shell(adb, f"su -c '{command}' || true")
+    elif needs_bluetooth_switch(adb):
+        switch_bluetooth_with_snippet(adb, on)
+    else:
+        shell(adb, f"{command} || true")
     end = time.time() + timeout
     while True:
         state = bluetooth_state(adb)
@@ -91,8 +129,20 @@ def set_bluetooth(adb, on, timeout=20.0):
 
 def is_awake(adb):
     """Whether the screen is on, not off, dozing or showing a screen saver."""
-    out = shell(adb, "dumpsys power | grep -m1 mWakefulness=")
-    return out.strip() == "mWakefulness=Awake"
+    out = shell(adb, "dumpsys power | grep -m1 -E '(mWakefulness|getWakefulnessLocked\\(\\))=' || true")
+    wakefulness = parse_wakefulness(out)
+    if wakefulness is None:
+        raise RuntimeError(f"no wakefulness in dumpsys power: {out!r}")
+    return wakefulness == "Awake"
+
+
+def parse_wakefulness(dump):
+    """The power manager's wakefulness, like Awake, Asleep or Dozing, from dumpsys power, or None.
+
+    AOSP prints "mWakefulness=Awake", the Galaxy A50 on Android 11 "getWakefulnessLocked()=Awake".
+    """
+    match = re.search(r"^\s*(?:mWakefulness|getWakefulnessLocked\(\))=(\w+)", dump, re.MULTILINE)
+    return match.group(1) if match else None
 
 
 def is_powered(adb):

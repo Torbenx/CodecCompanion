@@ -34,6 +34,13 @@ between the app and the system, which unit tests can't see.
 | --- | --- | --- | --- | --- |
 | Pixel 3a | `0000000028` | 9 | 28 | Rooted, pure test device, clock set to 2019 |
 | Pixel 3a | `0000000032` | 12L | **32** | Rooted, pure test device |
+| Galaxy A50 | `R0000000030` | 11 | 30 | Not rooted, pure test device, Samsung Bluetooth stack. LDAC must be on in the headset's Bluetooth settings (Codecs, LDAC): while it's off, Samsung ignores every codec change, see below |
+
+The A50's Samsung Bluetooth stack drops `setCodecConfigPreference` for a
+headset that offers LDAC unless the user turned LDAC on for it in the
+headset's Bluetooth settings, whatever codec is asked for. It doesn't tell
+the caller: the call is oneway, the codec just stays. It also needs
+BLUETOOTH_ADMIN for the call, which the app declares up to API 30.
 | Galaxy S24 | `R0000000036` | 17 | 37 | Not rooted, personal phone with a known PIN, Samsung Bluetooth stack. API 36 (Android 16) until November 2026 |
 
 | Headset | Address | Controlled by |
@@ -81,10 +88,10 @@ with the phone's lock screen is a capability:
 
 | Capability | Known from | Needed by | Testbed |
 | --- | --- | --- | --- |
-| Switch the phone's Bluetooth | API 29+, or root (`su`) on API 28, where the shell isn't allowed to | The testbed itself; a non-rooted API 28 phone can't take part | all |
+| Switch the phone's Bluetooth | Root (`su`), or up to API 30 the snippet's `BluetoothSwitch` receiver, or the shell's `svc` from API 31. The shell isn't allowed to on API 28 or on the A50's API 30 | The testbed itself | all |
 | No lock screen | A pure test device | C7: with a secure lock screen the app can't run after a reboot until the phone is unlocked, because its storage stays encrypted until then | both Pixels |
 | A lock screen the suite can unlock | A pure test device or a known password | C14, C15, C16: the phone is rebooted with a secure lock screen and unlocked by typing its PIN or password | all |
-| End the app's process like the system | `run-as … kill` on API 28 and 36; API 32 needs root, `run-as` can't see the process there | C1, C3, C4 | all |
+| End the app's process like the system | `run-as … kill` on API 28 and 36; on API 32 and the A50's API 30 SELinux doesn't let `run-as` signal it (toybox says "unknown pid"), so it needs root there, or `am kill` once the process is cached | C1, C3, C4; C4 kills a busy process, so not the A50 | all but C4 on the A50 |
 | LDAC | The codec capabilities of phone and headset, at run time | B3 | all, with the Qudelix |
 
 ### Code paths per API level
@@ -128,7 +135,7 @@ has no A2DP sink with real codecs.
 | --- | --- | --- |
 | UI (UiAutomator) | Every user action, including system dialogs (permission, companion link) | Only in UI tests and journeys |
 | App snippet | Apply a codec through `CodecApplier`, set a codec bypassing it (like another app would), set or delete preferred codecs (setting notes the device's info like the app's Save), sync presence, reset the app's state | Not in background or cold start tests |
-| adb, Bluetooth | The phone's adapter on and off (`svc bluetooth`, with su on API 28) | See [device_state.py](mobly_tests/lib/device_state.py). A2DP alone can't be switched from adb: `cmd bluetooth_manager` on API 36 only offers the adapter and its BLE mode (D14) |
+| adb, Bluetooth | The phone's adapter on and off (`svc bluetooth`, with su where there is root; without root up to API 30 a broadcast to the snippet's `BluetoothSwitch`, which holds BLUETOOTH_ADMIN, since Samsung's API 30 refuses the shell) | See [device_state.py](mobly_tests/lib/device_state.py). A2DP alone can't be switched from adb: `cmd bluetooth_manager` on API 36 only offers the adapter and its BLE mode (D14) |
 | adb, app lifecycle | Install, update, clear data, kill the process, grant and revoke the permission, launch activities | Revoking a permission kills the process |
 | adb, companion | `cmd companiondevice associate/disassociate` (checked on 28 and 32, to check on 36) | Links a device without the system dialog (D9) |
 | Headset | Depends on the backend, see [6.3](#63-headsets). Qudelix: `bt-off` (device disappears), `no-a2dp` (A2DP down, link and BLE stay), `normal`, `reboot` | `no-a2dp` gives the state "present but A2DP not connected" that cold start tests need |
@@ -372,7 +379,7 @@ Every reboot is an unattended one (`sim_helper.unattended_reboot`), so a
 SIM with a PIN unlocks by itself: the phone stores the SIM PINs before the
 reboot and enters them before the first unlock. A reboot while the user is
 still locked, C16's second one, is a plain reboot: the preparation of the
-first reboot stays valid until the unlock. Below API 30, which has no
+first reboot stays valid until the unlock. Below API 31, which has no
 unattended reboot, only a phone without a SIM is rebooted. The unlock
 first unlocks the storage with `locksettings verify`, waits until every SIM
 is loaded or absent, waits another 5 s for the lock screen to catch up, and

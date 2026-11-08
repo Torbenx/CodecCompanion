@@ -23,7 +23,8 @@ SIM_STATE_PROPERTY = "gsm.sim.state"
 LOADED = "LOADED"
 ABSENT = "ABSENT"
 
-UNATTENDED_REBOOT_SDK = 30
+# TelephonyManager.prepareForUnattendedReboot, the A50's API 30 has no such method
+UNATTENDED_REBOOT_SDK = 31
 HELPER_CLASS = "com.tt.autobluetoothcodec.snippet.UnattendedReboot"
 # TelephonyManager.PREPARE_UNATTENDED_REBOOT_*
 PREPARE_RESULTS = {0: "success", 1: "a SIM's PIN isn't stored, enter it once by hand", 2: "error"}
@@ -73,7 +74,7 @@ def unattended_reboot(ad):
     preparation remains valid until the user is unlocked.
 
     Doesn't reboot if the SIMs couldn't be prepared: the lock screen would ask
-    for a SIM PIN the suite doesn't know. Below API 30, which has no unattended
+    for a SIM PIN the suite doesn't know. Below API 31, which has no unattended
     reboot, only a phone without a SIM is rebooted. Doesn't wait for the SIMs.
     """
     adb = ad.adb

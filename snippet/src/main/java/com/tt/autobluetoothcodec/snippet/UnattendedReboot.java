@@ -18,8 +18,8 @@ public final class UnattendedReboot {
     }
 
     public static void main(String[] args) throws Exception {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            throw new UnsupportedOperationException("unattended reboots need API 30, this is " + Build.VERSION.SDK_INT);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            throw new UnsupportedOperationException("unattended reboots need API 31, this is " + Build.VERSION.SDK_INT);
         }
         // Hidden APIs, which app_process may use
         IBinder binder = (IBinder) Class.forName("android.os.ServiceManager")
