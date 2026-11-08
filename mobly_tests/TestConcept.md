@@ -234,7 +234,7 @@ Pitfalls the harness has to handle:
 | L1 | Component | JVM, Robolectric | Fake Bluetooth, fake time, SDK levels 28–36 | State, log events | – | ~65 tests, < 1 min |
 | L2 | UI | JVM with Robolectric, and every phone | Fake screen state, clicks | Semantics tree, callbacks | – | ~90 tests, ~1 min on the JVM, a few minutes per phone |
 | L3 | Bluetooth logic | Phones | Snippet, adb, headset | Log, `dumpsys`, snippet | yes | ~15 tests, ~10 min per phone |
-| L4 | Background and cold start | Phones | adb, headset | Log, `dumpsys` | no | ~13 tests, ~15 min per phone |
+| L4 | Background and cold start | Phones | adb, headset | Log, `dumpsys` | no | ~14 tests, ~15 min per phone |
 | L5 | Journeys | Phones | UI, headset | `dumpsys`, log, preferences, UI | no | ~12 tests, ~15 min per phone |
 | – | Harness self-tests | Host, Python | Recorded dumps and logs | Parsed values | – | seconds |
 
@@ -370,6 +370,7 @@ does, never launched, force-stopped, after a reboot or after an update.
 | C14 | After a reboot with a secure lock screen, A2DP connects before the first unlock: applied within 60 s of the unlock, without another connect; the time is recorded. The receiver noted the connect before the unlock | all | a lock screen the suite can unlock | P1 |
 | C15 | After the same reboot, the system reports the device to the companion service: after the unlock, and when it next connects | 33+ | a lock screen the suite can unlock | P1 |
 | C16 | After the same reboot, the device goes away and the app's process ends before the unlock: the unlock merges nothing, opening the main screen without a device merges the locked events. The disconnect before the unlock is noted, and the main screen reads the saved devices' info, which only works once the user is unlocked, without failing | all | a lock screen the suite can unlock | P1 |
+| C17 | A preferred codec the device no longer offers, which the Saved devices list still offers from the values it saw last: the connect sets it 5 times and resolves `MAX_ATTEMPTS`, the receiver and the service handle it once each, the codec stays the phone's own choice; opening the main screen notes the values the device offers now and applies nothing | all | | P2 |
 
 C7, C14, C15 and C16 are in `tests/reboot_test.py`, which runs last (6.9).
 C14 to C16 check that the scenario happened: the user is still
@@ -868,7 +869,8 @@ app would), `getCurrentCodec`, `getCapabilities`, `getPreferredCodec`,
 `setPreferredCodec` and `deletePreferredCodec` (which observe or stop
 observing the device, like the app does; setting also notes the device's name
 and, while it's connected, the time and the codecs it offers, like the app's
-Save, so the Saved devices list shows it), `getPending`, `syncPresence` and
+Save, so the Saved devices list shows it), `setOfferedCodecs` (replaces the
+codecs the Saved devices list has a saved device offering), `getPending`, `syncPresence` and
 `resetForTest` (log, stores and singletons back to their defaults). Codecs pass
 as the app's `AndroidCodecConfig` JSON. Calls into the app run on the main
 thread, like the app's own calls.
@@ -1201,6 +1203,13 @@ Checked on 2026-10-27, while writing this concept and in the spike (step 1):
 - In rare runs the unlock after a reboot typed the password before the lock
   screen was ready for it, right after the storage and the SIMs had
   unlocked, and the unlock failed. The unlock now waits 5 s before typing.
+- The first runs of C17 on the API 32 Pixel and the A50: passed. With Opus,
+  which the Qudelix doesn't offer, as the preferred codec, the manifest
+  receiver set it 5 times and resolved `MAX_ATTEMPTS`, nothing tried again,
+  and the codec stayed LDAC 96 kHz, 32-bit. The A50's Samsung stack keeps
+  LDAC in the selectable capabilities while LDAC is off in the headset's
+  settings (its recording in `testdata`), so that setting doesn't make a
+  codec one the device no longer offers.
 - Recordings of `dumpsys bluetooth_manager` (status and A2DP sections) and of
   the companion device outputs from every phone are in `mobly_tests/testdata`.
 

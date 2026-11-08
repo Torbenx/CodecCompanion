@@ -164,6 +164,16 @@ class AppSnippet : Snippet {
         }
     }
 
+    @Rpc(description = "Replaces the values a saved device offered when the app last read them, which the Saved " +
+            "devices list offers. Masks like getCapabilities returns them.")
+    fun setOfferedCodecs(address: String, capabilities: JSONArray) {
+        val masks = (0 until capabilities.length()).map {
+            val mask = capabilities.getJSONObject(it)
+            A2dpProfileUtil.ConfigMask(mask.getInt("codecType"), mask.getInt("sampleRates"), mask.getInt("bitsPerSample"))
+        }
+        onMain { SavedDeviceStore.updateInfo(context, device(address), capabilities = masks) }
+    }
+
     @Rpc(description = "Deletes the device's preferred codec and stops observing it, like the app does.")
     fun deletePreferredCodec(address: String) = onMain {
         SavedDeviceStore.remove(context, device(address))

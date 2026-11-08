@@ -16,6 +16,7 @@ from lib import baseline
 from lib import bt_oracle
 from lib import device_state
 from lib import headset
+from lib.bt_oracle import Capability
 from lib.bt_oracle import Codec
 from lib.bt_oracle import same_format
 from lib.device_test import BaselineTest
@@ -33,6 +34,9 @@ APPEARANCE_TIMEOUT = 180.0
 # The receiver notes a connect for the Saved devices list, then loads the log, which in a new process takes a
 # moment, and logs its trigger
 NOTED_BEFORE_TRIGGER_MS = 5000
+
+# C17: how long nothing may try the preferred codec again once the connect gave up on it
+GAVE_UP_SETTLE = 10.0
 
 # Characterization tests (D8), their results recorded per range of API levels on the testbed (6.7),
 # see device_test.recorded().
@@ -64,11 +68,17 @@ class ColdStartBase(BaselineTest):
         own = self.baseline.own_codec
         return AAC_44_16 if own is not None and own.codec_type == bt_oracle.SBC else SBC_44_16
 
-    def save_preferred(self, codec):
-        """Saves [codec] as preferred through the snippet, which also observes the device since API 33."""
+    def save_preferred(self, codec, offered=None):
+        """Saves [codec] as preferred through the snippet, which also observes the device since API 33. [offered], a
+        list of Capability, replaces the values the Saved devices list has the device offering."""
         self.ad.load_snippet(SNIPPET, app.SNIPPET_PACKAGE)
         try:
-            getattr(self.ad, SNIPPET).setPreferredCodec(self.address, codec.to_app())
+            snippet = getattr(self.ad, SNIPPET)
+            snippet.setPreferredCodec(self.address, codec.to_app())
+            if offered is not None:
+                snippet.setOfferedCodecs(self.address, [
+                    {"codecType": c.codec_type, "sampleRates": c.sample_rates, "bitsPerSample": c.bits_per_sample}
+                    for c in offered])
             # The device may appear right after observing starts. The service only logs that, it
             # applies the codec when A2DP connects, so unloading the snippet interrupts nothing
             self.wait_until_resolved(timeout=15)
@@ -138,6 +148,13 @@ class ColdStartBase(BaselineTest):
             if time.time() >= end:
                 asserts.fail(f"no operation applied a codec within {timeout:.0f} s: {self.describe(ops)}")
             time.sleep(0.2)
+
+    def offered_codecs(self):
+        """The values the Saved devices list has the headset offering, as (codec type, rates, sizes)."""
+        info = baseline.saved_device_info(self.adb)
+        asserts.assert_is_not_none(info, "the app's data directory can't be read")
+        return {(c["codecType"], c["sampleRateMask"], c["bitsPerSampleMask"])
+                for c in info.get(self.address, {}).get("capabilities", [])}
 
     def wait_until_resolved(self, timeout=30.0):
         """Waits until no operation is open, returns the log."""
@@ -335,3 +352,65 @@ class ColdStartTest(ColdStartBase):
         if expected is None:
             asserts.explicit_pass(f"recorded: applied {applied}; add it to C9_FORCE_STOPPED_APPLIED for API {self.sdk}")
         asserts.assert_equal(expected, applied, f"applied after a force stop: {self.describe(ops)}")
+
+    def test_c17_a_preferred_codec_the_device_no_longer_offers(self):
+        """A preferred codec the device no longer offers, like after a firmware update, which the Saved devices list
+        still offers from the values it saw last: the connect tries it 5 times and resolves MAX_ATTEMPTS, nothing tries
+        again and the codec stays the phone's own choice. The main screen then notes what the device offers now."""
+        offered = bt_oracle.device(self.adb, self.address).capabilities
+        codec = bt_oracle.codec_outside(offered)
+        self.save_preferred(codec, offered=offered_before(offered, codec))
+        asserts.assert_true(any(t == codec.codec_type and r & codec.sample_rate and b & codec.bits_per_sample
+                                for t, r, b in self.offered_codecs()),
+                            f"the Saved devices list doesn't offer {codec}: {self.offered_codecs()}")
+        mark = self.log.last_seq()
+        self.headset.reconnect(self.adb)
+        bt_oracle.wait_connected(self.adb, self.address, timeout=baseline.CONNECT_TIMEOUT)
+        end = time.time() + APPLY_TIMEOUT
+        while True:
+            ops = app_log.operations(self.log.events_after(mark))
+            if any(op.of_type("SET_CODEC_CONFIG") for op in ops) and all(op.resolution for op in ops):
+                break
+            if time.time() >= end:
+                asserts.fail(f"the connect didn't give up on {codec} within {APPLY_TIMEOUT:.0f} s: {self.describe(ops)}")
+            time.sleep(1)
+        time.sleep(GAVE_UP_SETTLE)
+        ops = app_log.operations(self.log.events_after(mark))
+        self.ad.log.info("C17: %s", self.describe(ops))
+        # The receiver, and since API 33 the service, each handle the connect once (D17)
+        triggers = [op.trigger.get("message") for op in ops]
+        asserts.assert_equal(len(set(triggers)), len(triggers), f"tried again: {self.describe(ops)}")
+        for op in ops:
+            asserts.assert_equal("A2DP_CONNECTED", op.trigger["type"], str(op))
+            if not op.of_type("SET_CODEC_CONFIG"):
+                # The second of the receiver and the service while the first one applies it
+                asserts.assert_equal("ALREADY_PENDING", op.resolution, str(op))
+                continue
+            asserts.assert_equal("MAX_ATTEMPTS", op.resolution, str(op))
+            asserts.assert_equal(5, op.resolution_event.get("attempt"), str(op))
+            set_codecs = {Codec.from_app(e["config"]["android"]) for e in op.of_type("SET_CODEC_CONFIG")}
+            asserts.assert_equal({codec}, set_codecs, f"codecs set by {op}")
+        dumped = bt_oracle.active_codec(self.adb, self.address)
+        asserts.assert_true(self.baseline.own_codec.same_config(dumped), f"dumpsys shows {dumped}")
+
+        mark = self.log.last_seq()
+        app.launch(self.adb)
+        now = {(c.codec_type, c.sample_rates, c.bits_per_sample)
+               for c in bt_oracle.device(self.adb, self.address).capabilities}
+        end = time.time() + 10
+        # The main screen reads the codec every second, the preferences are written in the background
+        while self.offered_codecs() != now:
+            if time.time() >= end:
+                asserts.fail(f"the Saved devices list offers {self.offered_codecs()}, the device {now}")
+            time.sleep(1)
+        app.go_home(self.adb)
+        applied = [op for op in app_log.operations(self.log.events_after(mark)) if op.of_type("SET_CODEC_CONFIG")]
+        asserts.assert_equal([], [str(op) for op in applied], "opening the main screen applied a codec")
+
+
+def offered_before(offered, codec):
+    """The values a device that offers [offered] offered while it still offered [codec] too."""
+    if not any(c.codec_type == codec.codec_type for c in offered):
+        return list(offered) + [Capability(codec.codec_type, codec.sample_rate, codec.bits_per_sample)]
+    return [Capability(c.codec_type, c.sample_rates | codec.sample_rate, c.bits_per_sample | codec.bits_per_sample)
+            if c.codec_type == codec.codec_type else c for c in offered]
