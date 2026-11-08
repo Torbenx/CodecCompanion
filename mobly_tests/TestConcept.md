@@ -231,7 +231,7 @@ Pitfalls the harness has to handle:
 | Level | Name | Runs on | Stimulus | Oracle | Snippet | Size, time |
 | --- | --- | --- | --- | --- | --- | --- |
 | L0 | Unit | JVM | Function calls | Return values | – | ~50 tests, seconds |
-| L1 | Component | JVM, Robolectric | Fake Bluetooth, fake time, SDK levels 28–36 | State, log events | – | ~55 tests, < 1 min |
+| L1 | Component | JVM, Robolectric | Fake Bluetooth, fake time, SDK levels 28–36 | State, log events | – | ~65 tests, < 1 min |
 | L2 | UI | JVM with Robolectric, and every phone | Fake screen state, clicks | Semantics tree, callbacks | – | ~90 tests, ~1 min on the JVM, a few minutes per phone |
 | L3 | Bluetooth logic | Phones | Snippet, adb, headset | Log, `dumpsys`, snippet | yes | ~15 tests, ~10 min per phone |
 | L4 | Background and cold start | Phones | adb, headset | Log, `dumpsys` | no | ~13 tests, ~15 min per phone |
@@ -287,11 +287,14 @@ levels and fakes that a phone can't provide.
 | K6 | `CompanionPresence` and `PermissionUtil` on SDK 28, 31, 32, 33, 34, 36, with and without the companion feature: observing by address and by id since 33 and nothing before, `syncAll` repairs, the receiver enabled on every level and the service since 33, `isAssociationRequired(ForAutoApply)`, on 31–32 a link only while the app has none and isn't exempt from auto revoke, address case | P1 |
 | K7 | `EventLog`: structure violations throw in debuggable builds, append and rewrite at 2 × `MAX_EVENTS`, repair with `OPERATION_INTERRUPTED` on load, `clear` keeps open operations, `flush` order, partial lines; disabling deletes the log, stays disabled after a restart and keeps operations that span it out of the log; loading on the background thread: `events` is null until loaded, events logged meanwhile follow the loaded ones, numbered on, `clear` and disabling meanwhile apply to the loaded events, `awaitWritten` waits for the thread | P1 |
 | K8 | `SavedDeviceStore`: invalid JSON reads as none, address case; only saved devices have info, updating it keeps the values not given, removing a device removes both tiers and restoring puts them back; before the unlock the info can be written but not read | P2 |
-| K9 | Direct boot: while the user is locked the log appends to its device protected file and can't be read; unlocking merges those events after the old ones, numbered on, also when reading notices the unlock, also across locked restarts; the unlock broadcast merges them without another event or read, its receiver is only registered while locked and unregistered once the load is queued; the device protected file stays until the merged log is written; operations left open by an earlier process are interrupted, those of this process continue; trimming and partial lines; disabled logging and the preferred codecs are known while locked | P1 |
+| K9 | Direct boot: while the user is locked the log appends to its device protected file and can't be read; unlocking merges those events after the old ones, numbered on, also when reading notices the unlock, also across locked restarts; the unlock broadcast merges them without another event or read, its receiver is only registered while locked and unregistered once the load is queued; the device protected file stays until the merged log is written; operations left open by an earlier process are interrupted, those of this process continue; trimming and partial lines; disabled logging and the preferred codecs are known while locked; an unlock between the first check and the registration of the receiver, which misses the broadcast, is noticed by the second check | P1 |
+| K10 | The main screen's observed codecs, with Robolectric's A2DP proxy for the screen and the fake for the applier, reporting the same codec: the first codec read in a process is logged once, opening the screen again logs nothing, a new process logs it again; a codec the applier read, verified or not, isn't logged; a changed codec is logged once, changing back too, and a change while the screen is stopped once it's started again; the codecs the applier's request goes through aren't logged | P2 |
 
 The main screen's own logic stays in `MainActivity` (D1, D13), with its own
-profile proxy. Its cases are covered on the phones: the permission states by
-V1 and J1, logging observed codecs by B3 and B11, read failures by B8,
+profile proxy. Logging observed codecs is covered by K10, which runs the
+activity with Robolectric's A2DP proxy, and on the phones by B3 and B11. Its
+other cases are covered on the phones: the permission states by V1 and J1,
+read failures by B8,
 saving, changing and deleting saved devices and their info by J10 and J11,
 and the ways out of the empty states, the system's dialog that turns
 Bluetooth on and the Bluetooth settings, by J12.

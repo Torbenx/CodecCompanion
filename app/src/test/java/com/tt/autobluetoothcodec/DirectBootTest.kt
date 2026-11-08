@@ -3,6 +3,7 @@ package com.tt.autobluetoothcodec
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.os.UserManager
 import android.util.AtomicFile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tt.autobluetoothcodec.TestSupport.ADDRESS
@@ -24,6 +25,10 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadows.ShadowUserManager
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -44,6 +49,7 @@ class DirectBootTest {
     fun setUp() {
         // The structure checks only throw in debuggable builds
         context.applicationInfo.flags = context.applicationInfo.flags or ApplicationInfo.FLAG_DEBUGGABLE
+        UnlockingUserManager.checksBeforeUnlock = -1
         setUserUnlocked(true)
         EventLog.resetForTest(context)
         SavedDeviceStore.clearForTest(context)
@@ -157,6 +163,24 @@ class DirectBootTest {
         runPending()
         assertEquals(0, unlockReceivers())
         // Merged without another event or read
+        assertEquals(listOf("old", "a"), EventLog.parse(lines(upsFile)).map { it.message })
+        assertFalse(dpsFile.exists())
+    }
+
+    @Test
+    @Config(shadows = [UnlockingUserManager::class])
+    fun anUnlockBeforeTheReceiverIsRegisteredIsNoticed() {
+        writeUps(event(0, EventType.TEST_LABEL, message = "old"))
+        restartLocked()
+        log.log(EventType.TEST_LABEL, message = "a")
+        // The next process starts locked, and the user unlocks between the log's first check and the registration of
+        // its receiver, which misses the broadcast
+        EventLog.restartForTest()
+        UnlockingUserManager.checksBeforeUnlock = 1
+        val log = EventLog.get(context)
+        assertTrue(log.isUserStorageInitialized())
+        assertEquals(0, unlockReceivers())
+        // Merged without a broadcast, another event or a read
         assertEquals(listOf("old", "a"), EventLog.parse(lines(upsFile)).map { it.message })
         assertFalse(dpsFile.exists())
     }
@@ -377,5 +401,26 @@ class DirectBootTest {
         assertNull(context.getSharedPreferences("preferred_codecs", Context.MODE_PRIVATE).getString(ADDRESS, null))
         setUserUnlocked(false)
         assertEquals(sbc(), SavedDeviceStore.getPreferred(context, device()))
+    }
+}
+
+/**
+ * Unlocks the user once [checksBeforeUnlock] checks of whether it's unlocked have reported it locked, without sending
+ * the unlock broadcast, like an unlock whose broadcast was sent before a receiver was registered.
+ */
+@Implements(UserManager::class)
+class UnlockingUserManager : ShadowUserManager() {
+    companion object {
+        // Negative while it doesn't unlock
+        var checksBeforeUnlock = -1
+    }
+
+    @Implementation
+    override fun isUserUnlocked(): Boolean {
+        if (checksBeforeUnlock == 0)
+            setUserUnlocked(true)
+        if (checksBeforeUnlock >= 0)
+            checksBeforeUnlock -= 1
+        return super.isUserUnlocked()
     }
 }
