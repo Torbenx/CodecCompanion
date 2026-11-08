@@ -551,11 +551,11 @@ class MainScreenTest {
 
     @Test
     fun choosingACodecKeepsTheRateAndSizeIfSupported() {
-        // LDAC also supports 48 kHz and 24-bit, so they stay
+        // LDAC also supports 48000 Hz and 24-bit, so they stay
         show(device(codec(CodecConfig.CODEC_TYPE_APTX_HD, CodecConfig.SAMPLE_RATE_48000, CodecConfig.BITS_PER_SAMPLE_24)))
         expand()
         chip("LDAC").performClick()
-        assertEquals(listOf("setCodec $ADDRESS LDAC, 48 kHz, 24-bit"), actions.calls)
+        assertEquals(listOf("setCodec $ADDRESS LDAC, 48000 Hz, 24-bit"), actions.calls)
     }
 
     @Test
@@ -565,8 +565,8 @@ class MainScreenTest {
         chip("aptX HD").performClick()
         chip("SBC").performClick()
         assertEquals(listOf(
-            "setCodec $ADDRESS aptX HD, 44.1 kHz, 24-bit",
-            "setCodec $ADDRESS SBC, 44.1 kHz, 16-bit",
+            "setCodec $ADDRESS aptX HD, 44100 Hz, 24-bit",
+            "setCodec $ADDRESS SBC, 44100 Hz, 16-bit",
         ), actions.calls)
     }
 
@@ -580,7 +580,7 @@ class MainScreenTest {
         show(device(masks = masks))
         expand()
         chip("AAC").performClick()
-        assertEquals(listOf("setCodec $ADDRESS AAC, 96 kHz, 32-bit"), actions.calls)
+        assertEquals(listOf("setCodec $ADDRESS AAC, 96000 Hz, 32-bit"), actions.calls)
     }
 
     @Test
@@ -599,9 +599,9 @@ class MainScreenTest {
         chip("24-bit").performClick()
         chip("990 kbps").performClick()
         assertEquals(listOf(
-            "setCodec $ADDRESS LDAC, 48 kHz, 32-bit",
-            "setCodec $ADDRESS LDAC, 96 kHz, 24-bit",
-            "setCodec $ADDRESS LDAC, 96 kHz, 32-bit, 990 kbps",
+            "setCodec $ADDRESS LDAC, 48000 Hz, 32-bit",
+            "setCodec $ADDRESS LDAC, 96000 Hz, 24-bit",
+            "setCodec $ADDRESS LDAC, 96000 Hz, 32-bit, 990 kbps",
         ), actions.calls)
     }
 

@@ -43,8 +43,8 @@ class LogScreenTest {
 
     private val sbc = LogCodecConfig.of(AndroidCodecConfig(CodecConfig.CODEC_TYPE_SBC, CodecConfig.SAMPLE_RATE_44100, CodecConfig.BITS_PER_SAMPLE_16))
     private val ldac = LogCodecConfig.of(AndroidCodecConfig(CodecConfig.CODEC_TYPE_LDAC, CodecConfig.SAMPLE_RATE_96000, CodecConfig.BITS_PER_SAMPLE_24))
-    private val sbcText = "SBC, 44.1 kHz, 16-bit"
-    private val ldacText = "LDAC, 96 kHz, 24-bit"
+    private val sbcText = "SBC, 44100 Hz, 16-bit"
+    private val ldacText = "LDAC, 96000 Hz, 24-bit"
 
     private val actions = object : LogScreenActions {
         val calls = ArrayList<String>()

@@ -210,12 +210,15 @@ sealed class CodecConfig : Cloneable {
         )) ?: this
     }
 
-    /** For example "LDAC, 96 kHz, 24-bit, adaptive bitrate". */
+    /**
+     * For example "LDAC, 96000 Hz, 24-bit, adaptive bitrate". The sample rate is in Hz like on the chips, a whole number,
+     * so no decimal separator can be mistaken for the commas between the parts.
+     */
     fun describe(): String {
         val codec = getCodecName(getCodecType()) ?: "unknown codec"
         // Non-breaking spaces keep the numbers and their units on one line
         val sampleRate = getSampleRate(sampleRate)
-            ?.let { if (it % 1000 == 0) "${it / 1000}\u00a0kHz" else "${it / 1000.0}\u00a0kHz" }
+            ?.let { "$it\u00a0Hz" }
             ?: "unknown sample rate"
         val bitsPerSample = getBitsPerSample(bitsPerSample)
             ?.let { "$it-bit" }

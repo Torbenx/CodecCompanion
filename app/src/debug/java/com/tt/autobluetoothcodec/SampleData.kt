@@ -57,7 +57,7 @@ internal object SampleData {
 
     fun sbc() = codec(CodecConfig.CODEC_TYPE_SBC, CodecConfig.SAMPLE_RATE_44100, CodecConfig.BITS_PER_SAMPLE_16)
 
-    /** A device as MainActivity reads it, by default the Qudelix with LDAC 96 kHz, 32-bit. */
+    /** A device as MainActivity reads it, by default the Qudelix with LDAC 96000 Hz, 32-bit. */
     fun device(
         codec: CodecConfig? = ldac(),
         android: AndroidCodecConfig? = codec?.toAndroid(),

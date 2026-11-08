@@ -60,13 +60,13 @@ class CodecConfigSerializationTest {
     @Test
     fun describe_isReadable() {
         fun describe(config: AndroidCodecConfig) = CodecConfig.fromAndroid(config)!!.describe()
-        assertEquals("LDAC, 96\u00a0kHz, 24-bit, adaptive bitrate", describe(AndroidCodecConfig(
+        assertEquals("LDAC, 96000\u00a0Hz, 24-bit, adaptive bitrate", describe(AndroidCodecConfig(
             CodecConfig.CODEC_TYPE_LDAC, CodecConfig.SAMPLE_RATE_96000, CodecConfig.BITS_PER_SAMPLE_24,
             codecSpecific1 = 10 + LDACCodecConfig.BITRATE_ADAPTIVE)))
-        assertEquals("LDAC, 44.1\u00a0kHz, 32-bit, 909\u00a0kbps", describe(AndroidCodecConfig(
+        assertEquals("LDAC, 44100\u00a0Hz, 32-bit, 909\u00a0kbps", describe(AndroidCodecConfig(
             CodecConfig.CODEC_TYPE_LDAC, CodecConfig.SAMPLE_RATE_44100, CodecConfig.BITS_PER_SAMPLE_32,
             codecSpecific1 = 10 + LDACCodecConfig.BITRATE_HIGH)))
-        assertEquals("AAC, 44.1\u00a0kHz, 16-bit, VBR high", describe(AndroidCodecConfig(
+        assertEquals("AAC, 44100\u00a0Hz, 16-bit, VBR high", describe(AndroidCodecConfig(
             CodecConfig.CODEC_TYPE_AAC, CodecConfig.SAMPLE_RATE_44100, CodecConfig.BITS_PER_SAMPLE_16,
             codecSpecific1 = 128 + AACCodecConfig.VARIABLE_BITRATE_HIGH)))
         assertEquals("SBC, unknown sample rate, 16-bit", describe(AndroidCodecConfig(

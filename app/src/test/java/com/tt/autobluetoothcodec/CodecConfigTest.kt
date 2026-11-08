@@ -183,21 +183,21 @@ class CodecConfigTest {
 
     @Test
     fun describe_ldacFixedBitratesFollowTheSampleRateFamily() {
-        assertEquals("LDAC, 44.1 kHz, 24-bit, 303 kbps", ldac(LDACCodecConfig.BITRATE_LOW, CodecConfig.SAMPLE_RATE_44100).describe())
-        assertEquals("LDAC, 88.2 kHz, 24-bit, 606 kbps", ldac(LDACCodecConfig.BITRATE_MID, CodecConfig.SAMPLE_RATE_88200).describe())
-        assertEquals("LDAC, 48 kHz, 24-bit, 330 kbps", ldac(LDACCodecConfig.BITRATE_LOW, CodecConfig.SAMPLE_RATE_48000).describe())
-        assertEquals("LDAC, 96 kHz, 24-bit, 990 kbps", ldac(LDACCodecConfig.BITRATE_HIGH).describe())
+        assertEquals("LDAC, 44100 Hz, 24-bit, 303 kbps", ldac(LDACCodecConfig.BITRATE_LOW, CodecConfig.SAMPLE_RATE_44100).describe())
+        assertEquals("LDAC, 88200 Hz, 24-bit, 606 kbps", ldac(LDACCodecConfig.BITRATE_MID, CodecConfig.SAMPLE_RATE_88200).describe())
+        assertEquals("LDAC, 48000 Hz, 24-bit, 330 kbps", ldac(LDACCodecConfig.BITRATE_LOW, CodecConfig.SAMPLE_RATE_48000).describe())
+        assertEquals("LDAC, 96000 Hz, 24-bit, 990 kbps", ldac(LDACCodecConfig.BITRATE_HIGH).describe())
         assertEquals("LDAC, unknown sample rate, 24-bit, 909/990 kbps", ldac(LDACCodecConfig.BITRATE_HIGH, CodecConfig.SAMPLE_RATE_NONE).describe())
-        assertEquals("LDAC, 96 kHz, 24-bit", ldac(LDACCodecConfig.BITRATE_SYSTEM_DEFAULT).describe())
+        assertEquals("LDAC, 96000 Hz, 24-bit", ldac(LDACCodecConfig.BITRATE_SYSTEM_DEFAULT).describe())
     }
 
     @Test
     fun describe_otherOptionsAndUnknownValues() {
-        assertEquals("aptX, 48 kHz, unknown sample size",
+        assertEquals("aptX, 48000 Hz, unknown sample size",
             config(android(CodecConfig.CODEC_TYPE_APTX, CodecConfig.SAMPLE_RATE_48000, CodecConfig.BITS_PER_SAMPLE_NONE)).describe())
-        assertEquals("AAC, 44.1 kHz, 16-bit, VBR off",
+        assertEquals("AAC, 44100 Hz, 16-bit, VBR off",
             config(android(CodecConfig.CODEC_TYPE_AAC, codecSpecific1 = 128 + AACCodecConfig.VARIABLE_BITRATE_DISABLED)).describe())
-        assertEquals("Opus, 48 kHz, 16-bit, complexity 7",
+        assertEquals("Opus, 48000 Hz, 16-bit, complexity 7",
             config(android(CodecConfig.CODEC_TYPE_OPUS, CodecConfig.SAMPLE_RATE_48000, codecSpecific3 = 17)).describe())
     }
 }
