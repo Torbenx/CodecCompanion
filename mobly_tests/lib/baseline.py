@@ -31,7 +31,7 @@ CONNECT_TIMEOUT = 40.0
 SETTINGS_TIMEOUT = 90.0
 # pm clear removes the link on API 36 within about 0.1 s, measured on the S24
 UNLINK_TIMEOUT = 5.0
-# Printed by preferred_codecs() once the app's data directory is open
+# Printed by read_preferences() once the app's data directory is open
 READABLE = "readable"
 
 
@@ -41,21 +41,41 @@ def foreground_activity(adb):
     return match.group(1) if match else None
 
 
-def preferred_codecs(adb):
-    """The app's preferred codecs from its preferences file, a Codec for each address, or None if
-    its data directory can't be read.
+def read_preferences(adb, name):
+    """The string values of one of the app's preferences files in device protected storage, by key, or
+    None if its data directory can't be read.
 
-    The marker tells a missing file, which means no preferred codecs, from a failed run-as or a
-    wrong directory, which would otherwise look the same.
+    The marker tells a missing file, which means no values, from a failed run-as or a wrong
+    directory, which would otherwise look the same.
     """
     out = device_state.shell(
         adb, f"run-as {app.PACKAGE} sh -c 'cd {app.DE_DATA_DIR} && echo {READABLE}"
-             f" && cat shared_prefs/preferred_codecs.xml 2>/dev/null' || true")
+             f" && cat shared_prefs/{name}.xml 2>/dev/null' || true")
     if not out.startswith(READABLE):
         return None
-    # Each value is the JSON of an AndroidCodecConfig, escaped as XML
-    return {address: bt_oracle.Codec.from_app(json.loads(html.unescape(value)))
-            for address, value in re.findall(r'<string name="([^"]+)">([^<]*)</string>', out)}
+    return parse_preferences(out)
+
+
+def parse_preferences(xml):
+    """The string values of a SharedPreferences file, by key, unescaped."""
+    return {key: html.unescape(value) for key, value in re.findall(r'<string name="([^"]+)">([^<]*)</string>', xml)}
+
+
+def preferred_codecs(adb):
+    """The app's preferred codecs from its preferences file, a Codec for each upper case address, or None
+    if its data directory can't be read."""
+    values = read_preferences(adb, "preferred_codecs")
+    # Each value is the JSON of an AndroidCodecConfig
+    return None if values is None else {
+        address: bt_oracle.Codec.from_app(json.loads(value)) for address, value in values.items()}
+
+
+def saved_device_info(adb):
+    """What the app keeps of each saved device for the Saved devices list, by upper case address, or None
+    if its data directory can't be read. Each is the JSON of SavedDeviceStore.Info: name, lastConnected
+    in ms on the phone's clock, and capabilities, the masks the device offered."""
+    values = read_preferences(adb, "saved_device_info")
+    return None if values is None else {address: json.loads(value) for address, value in values.items()}
 
 
 def element_bounds(xml, text):
@@ -139,6 +159,9 @@ class Baseline:
             problems.append("preferred codecs unreadable")
         elif preferred:
             problems.append(f"preferred codecs for {', '.join(preferred)}")
+        info = saved_device_info(adb)
+        if info:
+            problems.append(f"saved device info for {', '.join(info)}")
         if app.is_stopped(adb):
             problems.append("package is stopped")
         permission = app.permission_state(adb)

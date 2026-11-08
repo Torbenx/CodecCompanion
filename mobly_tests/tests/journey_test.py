@@ -4,6 +4,7 @@ They check that the parts work together, including the system's dialog that
 links a device, not every detail on the way; the UI tests cover those.
 """
 
+import datetime
 import re
 import time
 
@@ -11,9 +12,11 @@ from mobly import asserts
 
 from lib import app
 from lib import app_log
+from lib import baseline
 from lib import bt_oracle
 from lib import companion
 from lib import device_state
+from lib import headset
 from lib import screens
 from lib.bt_oracle import Codec
 from lib.bt_oracle import same_format
@@ -21,10 +24,21 @@ from lib.device_test import BaselineTest
 
 SNIPPET = "snippet"
 SBC_44_16 = Codec(bt_oracle.SBC, 0x1, 0x1)
+AAC_44_16 = Codec(bt_oracle.AAC, 0x1, 0x1)
 SBC_TEXTS = ("SBC", "44100 Hz", "16-bit")
 APPLY_TIMEOUT = 60.0
 EXPORTS = "cache/exports"
 MAC = re.compile(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
+# The app's locale is English whatever the phone's language, the S24 showed "Heute" here before 307d970. A
+# disconnect just before midnight is yesterday's by the time the banner is read.
+LAST_CONNECTED_TODAY = re.compile(r"Last connected: (Today|Yesterday), .+")
+OBSERVING_TIMEOUT = 10.0
+# Bluetooth turned on by the app's dialog, then the main screen waits for the profile before it says there are
+# no devices
+BLUETOOTH_ON_TIMEOUT = 20.0
+NO_DEVICES_TIMEOUT = datetime.timedelta(seconds=30)
+# The headset switched on reconnects to the phone it served last, this one
+HEADSET_ON_TIMEOUT = datetime.timedelta(seconds=60)
 
 
 def chips(codec):
@@ -295,3 +309,142 @@ class JourneyTest(BaselineTest):
         asserts.assert_is_none(MAC.search(export), "the export contains an address")
         asserts.assert_true(self.headset.name not in export, "the export contains the headset's name")
         asserts.assert_true('"address":"device-' in export, "the export has no device ids")
+
+    def stored(self):
+        """What the app stores of the headset as a saved device: its preferred codec and its info, None for each
+        that isn't stored."""
+        preferred, info = baseline.preferred_codecs(self.adb), baseline.saved_device_info(self.adb)
+        asserts.assert_true(preferred is not None and info is not None, "the app's data directory can't be read")
+        return preferred.get(self.address), info.get(self.address)
+
+    def wait_observing(self, observing):
+        """Since API 33 the app observes exactly its saved devices; waits until it does or doesn't observe the
+        headset."""
+        end = time.time() + OBSERVING_TIMEOUT
+        while companion.is_observing(self.adb, app.PACKAGE, self.address) != observing:
+            if time.time() >= end:
+                asserts.fail(f"the headset is {'not ' if observing else ''}observed {OBSERVING_TIMEOUT:.0f} s later")
+            time.sleep(1)
+
+    def wait_in_front(self, package, timeout=10.0):
+        """Waits until an activity of [package] is in front."""
+        end = time.time() + timeout
+        while not (activity := baseline.foreground_activity(self.adb) or "").startswith(package + "/"):
+            if time.time() >= end:
+                asserts.fail(f"{package} isn't in front within {timeout:.0f} s, {activity!r} is")
+            time.sleep(0.5)
+
+    def test_j10_change_a_saved_devices_preferred_codec_while_its_away(self):
+        """The Saved devices list shows a saved device with its preferred codec, connected or not; View device
+        opens its card. While it's away, the banner says when it was last connected, in English on any phone,
+        and its chips change the preferred codec: the next connect applies the new one."""
+        own = bt_oracle.active_codec(self.adb, self.address)
+        chip, codec = ("SBC", SBC_44_16) if own.codec_type != bt_oracle.SBC else ("AAC", AAC_44_16)
+        screen = self.main_screen()
+        self.save_preferred(screen)
+        saved = screen.saved()
+        asserts.assert_true(saved.shows(*chips(own)), f"the saved card doesn't show {own}")
+        asserts.assert_true(saved.connected_chip_shown(), "no Connected chip while the headset is connected")
+        asserts.assert_true(saved.wait_banner(screens.SAVED_CONNECTED), "the banner doesn't say it's connected")
+        screen = saved.tap_view()
+        asserts.assert_true(screen.card().child(text=screens.EXPANDED_MARK).wait.exists(screens.TOGGLE_TIMEOUT),
+                            "View device didn't expand the device's card")
+
+        off = device_state.clock(self.adb)
+        self.headset_off()
+        self.check_last_connected(off, "the disconnect")
+        saved = screen.saved()
+        asserts.assert_true(saved.connected_chip_shown(False), "the Connected chip shows after the headset went away")
+        asserts.assert_true(saved.wait_banner(screens.SAVED_NOT_CONNECTED), "the banner doesn't say it's not connected")
+        text = saved.last_connected_text()
+        asserts.assert_true(text is not None and LAST_CONNECTED_TODAY.fullmatch(text), f"the banner says {text!r}")
+
+        mark = self.log.last_seq()
+        saved.tap_chip(chip)
+        op = self.log.wait_for_operation(after=mark, trigger="USER_SAVE_PREFERRED", device=self.address, timeout=30)
+        asserts.assert_equal("PREFERRED_SAVED", op.resolution, str(op))
+        asserts.assert_equal("saved devices", op.trigger.get("message"), str(op))
+        preferred, _ = self.stored()
+        asserts.assert_true(same_format(codec, preferred), f"the preferred codec is {preferred}")
+        asserts.assert_true(saved.shows(*chips(codec)), f"the saved card doesn't show {codec}")
+
+        mark = self.log.last_seq()
+        self.headset_on()
+        self.wait_for_applied(mark, codec)
+        asserts.assert_true(saved.connected_chip_shown(), "no Connected chip after the headset came back")
+
+    def test_j11_delete_a_saved_device_and_undo(self):
+        """Deleting a saved device that isn't connected removes its preferred codec and its info, and since API 33
+        ends observing it; Undo puts everything back. Without Undo the Saved list is empty."""
+        screen = self.main_screen()
+        self.save_preferred(screen)
+        observing = self.sdk >= 33
+        if observing:
+            self.wait_observing(True)
+        off = device_state.clock(self.adb)
+        self.headset_off()
+        # The disconnect changes the info, so it's noted before what's stored is kept for comparing
+        self.check_last_connected(off, "the disconnect")
+        before = self.stored()
+        saved = screen.saved()
+
+        mark = self.log.last_seq()
+        # The snackbar only shows for 4 s, so the state in between is checked after the second delete
+        saved.tap_delete()
+        saved.undo()
+        op = self.log.wait_for_operation(after=mark, trigger="USER_SAVE_PREFERRED", device=self.address, timeout=30)
+        asserts.assert_equal("PREFERRED_SAVED", op.resolution, str(op))
+        asserts.assert_equal("undo delete", op.trigger.get("message"), str(op))
+        deleted = [e for e in self.log.events_after(mark) if e["type"] == "PREFERRED_DELETED"]
+        asserts.assert_equal(1, len(deleted), "deletions before the undo")
+        asserts.assert_true(deleted[0]["seq"] < op.trigger["seq"], "the undo came before the deletion")
+        asserts.assert_equal(before, self.stored(), "what the undo put back")
+        saved.wait_for_card()
+        if observing:
+            self.wait_observing(True)
+
+        mark = self.log.last_seq()
+        saved.tap_delete()
+        self.log.wait_for_event("PREFERRED_DELETED", after=mark, timeout=10)
+        saved.wait_for_empty_state(screens.NO_SAVED_DEVICES)
+        asserts.assert_equal((None, None), self.stored(), "what's stored after deleting")
+        if observing:
+            self.wait_observing(False)
+        asserts.assert_true(self.ad.ui(pkg=app.PACKAGE, text=screens.UNDO).wait.gone(screens.TIMEOUT),
+                            "the snackbar is still shown")
+        asserts.assert_equal((None, None), self.stored(), "what's stored once the snackbar is gone")
+
+    def test_j12_turn_bluetooth_on_and_find_the_headset(self):
+        """The main screen's empty states lead the way: with Bluetooth off the app turns it on through the
+        system's dialog, without devices it opens the Bluetooth settings, and the headset's card shows once it
+        connects."""
+        self.require_capability(headset.POWER_SWITCH)
+        self.headset.power_off()
+        bt_oracle.wait_connected(self.adb, self.address, timeout=20, connected=False)
+        device_state.set_bluetooth(self.adb, False)
+        app.launch(self.adb)
+        screen = screens.MainScreen(self.ad, self.headset)
+        screen.wait_for_empty_state(screens.ASLEEP)
+
+        screen.tap_text(screens.TURN_ON_BLUETOOTH)
+        screen.accept_bluetooth_dialog()
+        end = time.time() + BLUETOOTH_ON_TIMEOUT
+        while not device_state.is_bluetooth_on(self.adb):
+            if time.time() >= end:
+                asserts.fail(f"Bluetooth isn't on {BLUETOOTH_ON_TIMEOUT:.0f} s after the dialog, "
+                             f"it's {device_state.bluetooth_state(self.adb)}")
+            time.sleep(0.5)
+        screen.wait_for_empty_state(screens.NO_DEVICES, timeout=NO_DEVICES_TIMEOUT)
+
+        settings = app.resolve_activity(self.adb, "android.settings.BLUETOOTH_SETTINGS")
+        asserts.assert_is_not_none(settings, "nothing handles the Bluetooth settings")
+        screen.tap_text(screens.OPEN_BLUETOOTH_SETTINGS)
+        self.wait_in_front(settings)
+        device_state.shell(self.adb, "input keyevent KEYCODE_BACK")
+        self.wait_in_front(app.PACKAGE)
+        screen.wait_for_empty_state(screens.NO_DEVICES)
+
+        self.headset.power_on()
+        screen.wait_for_card(timeout=HEADSET_ON_TIMEOUT)
+        dumped = bt_oracle.active_codec(self.adb, self.address)
+        asserts.assert_true(screen.shows(*chips(dumped)), f"the card doesn't show {dumped}")

@@ -110,6 +110,19 @@ def is_unlocked(adb):
     return match.group(1) == "0"
 
 
+def clock(adb):
+    """The phone's clock in whole seconds since the epoch. The phones' clocks differ, the API 28 Pixel
+    is in 2019, so times the app stores are compared with this, never with the host's."""
+    return int(shell(adb, "date +%s"))
+
+
+def boot_time(adb):
+    """When the phone booted, in seconds since the epoch on its own clock."""
+    now = clock(adb)
+    uptime = float(shell(adb, "cat /proc/uptime").split()[0])
+    return now - uptime
+
+
 def wake(adb):
     """Turns the screen on. It shows the lock screen if the phone is locked."""
     shell(adb, "input keyevent KEYCODE_WAKEUP")

@@ -229,6 +229,20 @@ def go_home(adb):
     device_state.shell(adb, "input keyevent KEYCODE_HOME")
 
 
+def resolve_activity(adb, action):
+    """The package of the activity that handles [action], or None if there is none."""
+    out = device_state.shell(adb, f"cmd package resolve-activity --brief -a {action} || true")
+    return parse_resolved_package(out)
+
+
+def parse_resolved_package(output):
+    """The package from the output of cmd package resolve-activity --brief: its last line is the component."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines or "/" not in lines[-1]:
+        return None
+    return lines[-1].split("/", 1)[0]
+
+
 def run_instrumentation(adb, runner=f"{TEST_PACKAGE}/androidx.test.runner.AndroidJUnitRunner", timeout=900):
     """Runs the app's instrumented tests, the shared UI tests, and returns the raw output.
 

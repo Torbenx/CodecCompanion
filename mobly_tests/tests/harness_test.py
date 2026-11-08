@@ -4,6 +4,7 @@
   python -m unittest tests.harness_test
 """
 
+import json
 import logging
 import pathlib
 import re
@@ -106,6 +107,23 @@ class BaselineTest(unittest.TestCase):
         self.assertEqual((430, 650), baseline.element_bounds(xml, "Qudelix-5K"))
         self.assertEqual((430, 730), baseline.element_bounds(xml, "R&D Buds"))
         self.assertIsNone(baseline.element_bounds(xml, "Qudelix"))
+
+    def test_preferencesAreUnescaped(self):
+        # In the format SharedPreferences writes, which escapes quotes and ampersands
+        xml = ("<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n"
+               f'    <string name="{QUDELIX}">{{&quot;name&quot;:&quot;R&amp;D Buds&quot;,&quot;lastConnected&quot;:'
+               '1762560000123,&quot;capabilities&quot;:[{&quot;codecType&quot;:0,&quot;sampleRateMask&quot;:3,'
+               '&quot;bitsPerSampleMask&quot;:1}]}</string>\n'
+               '    <boolean name="enabled" value="true" />\n</map>\n')
+        values = baseline.parse_preferences(xml)
+        self.assertEqual([QUDELIX], list(values))
+        info = json.loads(values[QUDELIX])
+        self.assertEqual("R&D Buds", info["name"])
+        self.assertEqual(1762560000123, info["lastConnected"])
+        self.assertEqual([{"codecType": 0, "sampleRateMask": 3, "bitsPerSampleMask": 1}], info["capabilities"])
+
+    def test_noPreferencesFile(self):
+        self.assertEqual({}, baseline.parse_preferences(""))
 
 
 class CompanionTest(unittest.TestCase):
@@ -266,6 +284,19 @@ class AutoRevokeTest(unittest.TestCase):
 
     def test_api28HasNoSuchOp(self):
         self.assertIsNone(app.parse_auto_revoke_mode("Error: Unknown operation string: AUTO_REVOKE_PERMISSIONS_IF_UNUSED\n"))
+
+
+class ResolveActivityTest(unittest.TestCase):
+    """`cmd package resolve-activity --brief -a android.settings.BLUETOOTH_SETTINGS`."""
+
+    def test_component(self):
+        out = "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\n" \
+              "com.android.settings/.Settings$BluetoothSettingsActivity\n"
+        self.assertEqual("com.android.settings", app.parse_resolved_package(out))
+
+    def test_nothingResolves(self):
+        self.assertIsNone(app.parse_resolved_package("No activity found\n"))
+        self.assertIsNone(app.parse_resolved_package(""))
 
 
 class RecordedTest(unittest.TestCase):

@@ -33,6 +33,23 @@ SETTLE = datetime.timedelta(seconds=1)
 TOGGLE_TIMEOUT = datetime.timedelta(seconds=3)
 PERMISSION_DENY = ("com.android.permissioncontroller:id/permission_deny_button",
                    "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button")
+# The system's dialog that turns Bluetooth on for an app: an alert dialog, whose positive button has this id,
+# else found by its text in the phones' languages
+DIALOG_POSITIVE = "android:id/button1"
+BLUETOOTH_ALLOW = r"(?i)(allow|zulassen|erlauben|yes|ja|ok|turn on|einschalten|aktivieren)"
+# The main screen's empty states and their buttons
+ASLEEP = "Codec is asleep"
+TURN_ON_BLUETOOTH = "Turn on Bluetooth"
+NO_DEVICES = "Codec hasn't found any audio devices"
+OPEN_BLUETOOTH_SETTINGS = "Open Bluetooth settings"
+NO_SAVED_DEVICES = "Codec has no saved devices yet"
+# A saved device's banner: its titles, and the text after the title while it isn't connected
+SAVED_CONNECTED = "Connected"
+SAVED_NOT_CONNECTED = "Not connected"
+LAST_CONNECTED = r"Last connected: .*"
+# Tapping Undo on the snackbar, which shows for 4 s
+UNDO = "Undo"
+SNACKBAR_TIMEOUT = datetime.timedelta(seconds=3)
 
 
 def register(ad):
@@ -60,9 +77,26 @@ class MainScreen:
         app.launch(self.ad.adb)
         return self.wait_for_card()
 
-    def wait_for_card(self):
-        asserts.assert_true(self.card().wait.exists(TIMEOUT), "the device's card isn't shown")
+    def wait_for_card(self, timeout=TIMEOUT):
+        asserts.assert_true(self.card().wait.exists(timeout), "the device's card isn't shown")
         return self
+
+    def show_list(self, name):
+        """Shows the list [name], "connected" or "saved", with the switch below the title, which opens it."""
+        segment = self.ui(res=f"list_{name}")
+        if not segment.exists:
+            asserts.assert_true(self.ui(res="list_toggle").wait.click(TIMEOUT), "no title to open the list switch")
+        asserts.assert_true(segment.wait.click(TIMEOUT), f"no button for the {name} list")
+
+    def saved(self):
+        """Shows the Saved devices list, returns the headset's card in it."""
+        self.show_list("saved")
+        return SavedCard(self.ad, self.headset).wait_for_card()
+
+    def connected(self):
+        """Shows the Connected devices list, returns the screen for the headset's card in it, which may not show."""
+        self.show_list("connected")
+        return MainScreen(self.ad, self.headset)
 
     def card(self):
         return self.ui(res=self.card_res)
@@ -245,6 +279,78 @@ class MainScreen:
             name.click()
         asserts.assert_true(allow.wait.click(TIMEOUT), "the dialog has no button to allow linking")
         self.ui(pkg=dialog).wait.gone(TIMEOUT)
+
+    def accept_bluetooth_dialog(self):
+        """Accepts the system's dialog that turns Bluetooth on for the app, by its positive button, else by its
+        text. The app's own windows have neither."""
+        button = self.ui(res=DIALOG_POSITIVE)
+        if not button.wait.exists(TIMEOUT):
+            button = self.ui(textMatches=BLUETOOTH_ALLOW, clickable=True)
+            asserts.assert_true(button.wait.exists(TIMEOUT), "the dialog to turn Bluetooth on didn't appear")
+        package = button.info.get("packageName")
+        asserts.assert_not_equal(app.PACKAGE, package, "the button to turn Bluetooth on is the app's own")
+        self.ad.log.info("the dialog to turn Bluetooth on is shown by %s", package)
+        button.click()
+        self.ui(pkg=package).wait.gone(TIMEOUT)
+
+    def wait_for_empty_state(self, text, timeout=TIMEOUT):
+        """Waits until the main screen shows the empty state with [text], one of ASLEEP, NO_DEVICES and
+        NO_SAVED_DEVICES."""
+        asserts.assert_true(self.ui(pkg=app.PACKAGE, text=text).wait.exists(timeout), f"the screen doesn't show {text!r}")
+
+
+class SavedCard(MainScreen):
+    """A saved device's card in the Saved devices list.
+
+    Collapsed, it shows the preferred codec's chips and the Connected chip while the device is connected.
+    Expanded, its banner says whether it's connected, with View device, else when it was last connected, with
+    Delete; below it the rows of chips change the preferred codec right away. The card is named after the
+    device, as the app saw it when saving.
+    """
+
+    def __init__(self, ad, headset):
+        super().__init__(ad, headset)
+        self.card_res = "saved_" + headset.address.upper()
+
+    def open(self):
+        app.launch(self.ad.adb)
+        self.show_list("saved")
+        return self.wait_for_card()
+
+    def banner(self):
+        return self.card().child(res="saved_banner")
+
+    def connected_chip_shown(self, shown=True):
+        """Waits until the collapsed card shows the Connected chip, or doesn't if not [shown]; whether it did."""
+        self.collapse()
+        chip = self.card().child(res="connected_chip")
+        return chip.wait.exists(TIMEOUT) if shown else chip.wait.gone(TIMEOUT)
+
+    def wait_banner(self, title):
+        """Waits until the expanded card's banner has [title], SAVED_CONNECTED or SAVED_NOT_CONNECTED; whether it
+        does."""
+        self.expand()
+        self.scroll_to_top()
+        return self.banner().child(text=title).wait.exists(TIMEOUT)
+
+    def last_connected_text(self):
+        """The banner's "Last connected: …" text while the device isn't connected, None without one."""
+        self.expand()
+        self.scroll_to_top()
+        text = self.banner().child(textMatches=LAST_CONNECTED)
+        return text.text if text.wait.exists(TIMEOUT) else None
+
+    def tap_view(self):
+        """Taps View device, which shows the device's expanded card in the Connected devices list."""
+        self.tap_banner_button("view_device")
+        return MainScreen(self.ad, self.headset).wait_for_card()
+
+    def tap_delete(self):
+        self.tap_banner_button("delete_saved")
+
+    def undo(self):
+        """Taps Undo on the snackbar that deleting shows."""
+        asserts.assert_true(self.ui(pkg=app.PACKAGE, text=UNDO).wait.click(SNACKBAR_TIMEOUT), "no Undo on the snackbar")
 
 
 class LogScreen:

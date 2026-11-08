@@ -212,6 +212,43 @@ class BaselineTest(DeviceTest):
         """Undoes what a test changed outside the baseline, after the artifacts are collected and before
         the repair. Nothing by default; the reboot tests unlock the phone and clear the PIN (D26)."""
 
+    def headset_off(self):
+        """The device goes away: the headset off, or the phone's Bluetooth for headsets without power switch."""
+        if headset_controller.POWER_SWITCH in self.headset.capabilities:
+            self.headset.power_off()
+        else:
+            device_state.set_bluetooth(self.adb, False)
+        bt_oracle.wait_connected(self.adb, self.headset.address, timeout=20, connected=False)
+
+    def headset_on(self):
+        if headset_controller.POWER_SWITCH in self.headset.capabilities:
+            self.headset.power_on()
+        else:
+            device_state.set_bluetooth(self.adb, True)
+
+    def last_connected(self):
+        """When the app noted the headset last connected or disconnected, in ms on the phone's clock, from
+        the saved devices' info; None if it has no info for it."""
+        info = baseline.saved_device_info(self.adb)
+        asserts.assert_is_not_none(info, "the app's data directory can't be read")
+        return info.get(self.headset.address, {}).get("lastConnected")
+
+    def check_last_connected(self, since, what, until=None, timeout=10.0):
+        """Waits until the app noted [what], a connect or disconnect, at or after [since] and up to [until], or
+        up to now; seconds on the phone's clock as device_state.clock() reads them, so the upper bound is
+        rounded up. The receiver may only get the broadcast after dumpsys shows the change, so it waits up to
+        [timeout] s. Returns the time noted, in ms."""
+        end = time.time() + timeout
+        while True:
+            noted = self.last_connected()
+            latest = until if until is not None else device_state.clock(self.adb)
+            if noted is not None and since * 1000 <= noted < (latest + 1) * 1000:
+                return noted
+            if time.time() >= end:
+                asserts.fail(f"{what} wasn't noted: last connected {noted} ms, expected from {since} s"
+                             + (f" to {until} s" if until is not None else ""))
+            time.sleep(1)
+
     def teardown_class(self):
         if self.leaks:
             path = pathlib.Path(self.log_path) / f"{self.TAG}-leaks.txt"

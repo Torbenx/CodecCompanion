@@ -143,10 +143,25 @@ class AppSnippet : Snippet {
         SavedDeviceStore.getPreferred(context, device(address))?.let { toJson(it.toAndroid()) }
     }
 
-    @Rpc(description = "Saves a preferred codec without asking for a link, and observes the device like the app does.")
-    fun setPreferredCodec(address: String, config: JSONObject) = onMain {
-        SavedDeviceStore.setPreferred(context, device(address), appConfig(config))
-        CompanionPresence.update(context, device(address))
+    @Rpc(description = "Saves a preferred codec without asking for a link, and observes the device like the app " +
+            "does. Notes its name, and while it's connected the time and the values it offers, like the app's Save.")
+    fun setPreferredCodec(address: String, config: JSONObject) {
+        val device = device(address)
+        val target = appConfig(config)
+        // The proxy can't be had on the main thread, and not at all with Bluetooth off
+        val proxy = if (adapter.isEnabled) runCatching { profile() }.getOrNull() else null
+        // The reads need the permission, which a test may have revoked
+        val connected = runCatching { proxy?.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED }.getOrDefault(false)
+        // Since API 36 reading them needs a link too
+        val masks = if (connected) runCatching { A2dpProfileUtil.getSelectableCodecConfigs(proxy!!, device) }.getOrNull() else null
+        val name = runCatching { device.name }.getOrNull()
+        onMain {
+            SavedDeviceStore.setPreferred(context, device, target)
+            SavedDeviceStore.updateInfo(context, device, name = name,
+                lastConnected = if (connected) System.currentTimeMillis() else null,
+                capabilities = masks?.takeIf { it.isNotEmpty() })
+            CompanionPresence.update(context, device)
+        }
     }
 
     @Rpc(description = "Deletes the device's preferred codec and stops observing it, like the app does.")

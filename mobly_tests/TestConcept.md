@@ -21,10 +21,11 @@ between the app and the system, which unit tests can't see.
 | `CodecConfig` model, serializers | Wrong mapping to the stack's values, wrong verification (`isFulfilledBy`), old stored formats | Unit tests |
 | `CodecApplier` | Retries, supersede and pending rules, profile proxy lifecycle, resolutions, the order in which `pending` is published | Component tests with a fake Bluetooth backend, a few device tests |
 | `A2dpProfileUtil` | Reflection breaks on a version or vendor stack, values read differently | Device contract tests on every phone |
-| `CodecCompanionService`, `A2dpConnectReceiver` | Not started, started too late, killed mid-apply, process restarted without state | Background and cold start tests on the phones |
+| `CodecCompanionService`, `A2dpConnectReceiver` | Not started, started too late, killed mid-apply, process restarted without state, a saved device's connect or disconnect not noted | Background and cold start tests on the phones |
+| `SavedDeviceStore` | Preferred codecs or the saved devices' info lost, the info read before the unlock | Unit and component tests, the cold start and reboot tests |
 | `CompanionPresence`, `PermissionUtil` | Wrong branch for an API level or a phone without the companion feature, observing drifts from the stored state | Component tests across SDK levels, device tests on 31+ |
 | `EventLog`, `LogExport` | Broken operation structure, lost or partial lines, trimming, anonymisation | Unit and component tests |
-| `MainActivity` | Wrong UI for a device state, chip logic, permission and linking flows, logging observed codecs | UI tests with fake state, Bluetooth logic tests with the main screen open, a few journeys |
+| `MainActivity` | Wrong UI for a device state, chip logic, permission and linking flows, logging observed codecs, saving, changing and deleting saved devices, the empty states' ways out | UI tests with fake state, Bluetooth logic tests with the main screen open, a few journeys |
 | `LogActivity` | Wrong texts, grouping, expand and collapse, export and clear | UI tests with the sample log |
 
 ## 2. Testbed
@@ -112,6 +113,7 @@ has no A2DP sink with real codecs.
 | Channel | Tells | Strengths | Limits | Use as |
 | --- | --- | --- | --- | --- |
 | Event log file, read with `run-as … cat` | What the app did, why, with which codec, how many attempts | Records background work. Reading it doesn't start or touch the app process. Its format is a product feature (export), so it's stable | Lines are written on a background thread, the last one may be partial or missing | **Main oracle for behaviour** |
+| Preferences files, read with `run-as … cat` | The preferred codecs, and each saved device's info: its name, when it last connected or disconnected, the codecs it offered | Like the log, reading doesn't touch the app process. Device protected, so readable once the user unlocked, also for what was written before | Written in the background, so a read right after a change may see the old value | Oracle for what the app stores |
 | `TestLabelReceiver` broadcast | Marks a test step with a known `seq` | Flushes the log before the broadcast completes, so "label, then read" is consistent | Starts the app process if it isn't running | Step marker and flush barrier, outside of cold start windows |
 | App snippet | Preferred codecs, `pending`, associations and the codec as the app sees them | Exact internal state, no UI involved | Runs in the app's process as instrumentation: elevates its priority and restarts it when loaded and unloaded | Setup and inspection in Bluetooth logic tests |
 | `dumpsys bluetooth_manager` | Adapter state, A2DP connection and active codec per device | Independent of the app's code, so it can check the app's own reads | Format differs per API level, 2 MB on the S24 | **Main oracle for the physical result** |
@@ -125,7 +127,7 @@ has no A2DP sink with real codecs.
 | Channel | Does | Notes |
 | --- | --- | --- |
 | UI (UiAutomator) | Every user action, including system dialogs (permission, companion link) | Only in UI tests and journeys |
-| App snippet | Apply a codec through `CodecApplier`, set a codec bypassing it (like another app would), set or delete preferred codecs, sync presence, reset the app's state | Not in background or cold start tests |
+| App snippet | Apply a codec through `CodecApplier`, set a codec bypassing it (like another app would), set or delete preferred codecs (setting notes the device's info like the app's Save), sync presence, reset the app's state | Not in background or cold start tests |
 | adb, Bluetooth | The phone's adapter on and off (`svc bluetooth`, with su on API 28) | See [device_state.py](mobly_tests/lib/device_state.py). A2DP alone can't be switched from adb: `cmd bluetooth_manager` on API 36 only offers the adapter and its BLE mode (D14) |
 | adb, app lifecycle | Install, update, clear data, kill the process, grant and revoke the permission, launch activities | Revoking a permission kills the process |
 | adb, companion | `cmd companiondevice associate/disassociate` (checked on 28 and 32, to check on 36) | Links a device without the system dialog (D9) |
@@ -185,7 +187,12 @@ Pitfalls the harness has to handle:
   invariants are found in the teardown itself. Passing tests don't pay for the
   UI dump and screenshot, about 6 s each.
 - The phones' clocks differ (the API 28 Pixel is in 2019). Events are ordered
-  by `seq` and labels, never compared with the host's time.
+  by `seq` and labels, never compared with the host's time. The times the app
+  notes for the Saved devices list are compared with the phone's own clock
+  (`device_state.clock`, whole seconds) or with the time of the receiver's
+  trigger in the log, which it logs right after noting a connect. A reconnect
+  is a disconnect and a connect, so only the trigger tells that the connect
+  was noted.
 - `dumpsys bluetooth_manager` has several per-device tables, like the AVRCP
   volume table with its own connection column. The A2DP connection and codec
   come from the A2DP service section only. Its format differs: API 28 has an
@@ -218,10 +225,10 @@ Pitfalls the harness has to handle:
 | --- | --- | --- | --- | --- | --- | --- |
 | L0 | Unit | JVM | Function calls | Return values | – | ~50 tests, seconds |
 | L1 | Component | JVM, Robolectric | Fake Bluetooth, fake time, SDK levels 28–36 | State, log events | – | ~55 tests, < 1 min |
-| L2 | UI | JVM with Robolectric, and every phone | Fake screen state, clicks | Semantics tree, callbacks | – | ~40 tests, ~1 min on the JVM, a few minutes per phone |
+| L2 | UI | JVM with Robolectric, and every phone | Fake screen state, clicks | Semantics tree, callbacks | – | ~90 tests, ~1 min on the JVM, a few minutes per phone |
 | L3 | Bluetooth logic | Phones | Snippet, adb, headset | Log, `dumpsys`, snippet | yes | ~15 tests, ~10 min per phone |
 | L4 | Background and cold start | Phones | adb, headset | Log, `dumpsys` | no | ~13 tests, ~15 min per phone |
-| L5 | Journeys | Phones | UI, headset | `dumpsys`, log, UI | no | ~8 tests, ~10 min per phone |
+| L5 | Journeys | Phones | UI, headset | `dumpsys`, log, preferences, UI | no | ~12 tests, ~15 min per phone |
 | – | Harness self-tests | Host, Python | Recorded dumps and logs | Parsed values | – | seconds |
 
 L0 to L2 need no phone and run on every build, later also in CI. L2 also runs
@@ -268,16 +275,19 @@ levels and fakes that a phone can't provide.
 | K1 | `CodecApplier` resolutions: `CODEC_VERIFIED` on attempt 1 and N after two matching reads, a codec changed back after the first matching read set again (D19), `MAX_ATTEMPTS` after 5, `NOT_CONNECTED`, `NO_ASSOCIATION` (34, 36), `NO_PERMISSION` (31+), `NO_PREFERRED_CODEC`, `PROFILE_UNAVAILABLE` (Bluetooth off, no proxy), `PROFILE_DISCONNECTED`, `SECURITY_EXCEPTION`, hand-back to `onSecurityException`, `ERROR` | P1 |
 | K2 | `CodecApplier` coordination: `ALREADY_PENDING`, `SUPERSEDED` with `pending` never showing the device idle in between (regression test for manual 1.5), cancel by device and by operation, two devices with their own timing, `onDone` exactly once per request, `knownCodec` is the last read (or observed codec) by the time the request ends | P1 |
 | K3 | `CodecApplier` proxy lifecycle: requested once, closed on disconnect, requested again by the next request (manual 2.3) | P2 |
-| K4 | `A2dpConnectReceiver`: ignores other actions, states and devices without a preferred codec; deadline resolves `TIMEOUT`; an exception resolves `ERROR`; the broadcast finishes once, after the flush | P1 |
+| K4 | `A2dpConnectReceiver`: ignores other actions, states and devices without a preferred codec; deadline resolves `TIMEOUT`; an exception resolves `ERROR`; the broadcast finishes once, after the flush; notes when a saved device connects and disconnects, but not a failed connection attempt | P1 |
 | K5 | `CodecCompanionService`: no preferred codec registers no receiver; appearing registers the receiver once and applies nothing, even with A2DP connected (D23); A2DP connecting applies only for present devices; disappearing cancels; `onDestroy` unregisters; a restarted service knows no present devices (see C3); since API 36 a device is present while any source reports it (D18) | P1 |
 | K6 | `CompanionPresence` and `PermissionUtil` on SDK 28, 31, 32, 33, 34, 36, with and without the companion feature: observing by address and by id since 33 and nothing before, `syncAll` repairs, the receiver enabled on every level and the service since 33, `isAssociationRequired(ForAutoApply)`, on 31–32 a link only while the app has none and isn't exempt from auto revoke, address case | P1 |
 | K7 | `EventLog`: structure violations throw in debuggable builds, append and rewrite at 2 × `MAX_EVENTS`, repair with `OPERATION_INTERRUPTED` on load, `clear` keeps open operations, `flush` order, partial lines; disabling deletes the log, stays disabled after a restart and keeps operations that span it out of the log; loading on the background thread: `events` is null until loaded, events logged meanwhile follow the loaded ones, numbered on, `clear` and disabling meanwhile apply to the loaded events, `awaitWritten` waits for the thread | P1 |
-| K8 | `PreferredCodecStore`: invalid JSON reads as none, address case | P3 |
+| K8 | `SavedDeviceStore`: invalid JSON reads as none, address case; only saved devices have info, updating it keeps the values not given, removing a device removes both tiers and restoring puts them back; before the unlock the info can be written but not read | P2 |
 | K9 | Direct boot: while the user is locked the log appends to its device protected file and can't be read; unlocking merges those events after the old ones, numbered on, also when reading notices the unlock, also across locked restarts; the unlock broadcast merges them without another event or read, its receiver is only registered while locked and unregistered once the load is queued; the device protected file stays until the merged log is written; operations left open by an earlier process are interrupted, those of this process continue; trimming and partial lines; disabled logging and the preferred codecs are known while locked | P1 |
 
 The main screen's own logic stays in `MainActivity` (D1, D13), with its own
 profile proxy. Its cases are covered on the phones: the permission states by
-V1 and J1, logging observed codecs by B3 and B11, read failures by B8.
+V1 and J1, logging observed codecs by B3 and B11, read failures by B8,
+saving, changing and deleting saved devices and their info by J10 and J11,
+and the ways out of the empty states, the system's dialog that turns
+Bluetooth on and the Bluetooth settings, by J12.
 
 ### L2 UI tests
 
@@ -303,6 +313,9 @@ the UI polish. The same tests run on the JVM and on every phone
 | V12 | Screenshots in light and dark, font scales, landscape, screen sizes; after the UI polish (D5) | P3 |
 | V13 | About screen: reached from the main screen's menu; the version, and the source code, license and third-party licenses items open their targets; the build collected the third-party licenses | P2 |
 | V14 | Empty states: Bluetooth off asks to turn it on, after the permission screens; no audio devices offers the Bluetooth settings, but not while the profile is still connecting; the Saved list with nothing saved leads back to the connected devices, and with something saved has no empty state | P2 |
+| V15 | Saved devices list: each saved device with its preferred codec, and the Connected chip while it's connected; expanded, View device for a connected one, which opens its expanded card in the Connected list, otherwise when it was last connected (its text on the JVM only, `LastConnectedTextTest`) and Delete, which the snackbar can undo; the chips change the preferred codec, only to values the device offered; without the permission the list asks for it, with Bluetooth off it still shows | P1 |
+| V16 | Top bar and lists: the title names the list and opens the switch, which shows either list; a swipe moves to the other one and the switch's selection with it; cards start collapsed, and each list keeps its expanded cards while the other shows (the bar on the JVM only, `MainTopBarTest`) | P2 |
+| V17 | A pending codec change: the chips show its target, the rows the device doesn't report yet as pending, and the bitrate left to the system as reported; choices build on the target; the banner and Save compare with it | P2 |
 
 ### L3 Bluetooth logic tests
 
@@ -332,21 +345,21 @@ does, never launched, force-stopped, after a reboot or after an update.
 
 | ID | Test | Runs on | Needs | Prio |
 | --- | --- | --- | --- | --- |
-| C1 | App process killed, the headset reconnects: the preferred codec is applied, by the service from 33 and by the manifest receiver on every level (D17) | all | | P1 |
-| C2 | The same with the app in the foreground and in the background but alive (manual 2.1) | all | | P1 |
+| C1 | App process killed, the headset reconnects: the preferred codec is applied, by the service from 33 and by the manifest receiver on every level (D17). The receiver notes the disconnect and the connect for the Saved devices list | all | | P1 |
+| C2 | The same with the app in the foreground and in the background but alive (manual 2.1), and the receiver notes the connect | all | | P1 |
 | C3 | App process killed while the device is present but A2DP is down, then A2DP connects: records whether the codec is applied. The service keeps the present devices in memory, and the system may restart it without calling `onDeviceAppeared` again. Characterization (D8) | 33+ | A2DP switch | P1 |
 | C4 | Process killed during an operation: the next start resolves it `OPERATION_INTERRUPTED`, nothing stays unresolved | all | | P2 |
 | C5 | Permission revoked, the device connects: its appearance is logged since 33, nothing is applied, anything that tries resolves `NO_PERMISSION`, no crash (D23) | 31+ | | P2 |
-| C6 | No preferred codec: the codec isn't touched and nothing is logged; the manifest receiver starts the process and returns | all | | P2 |
+| C6 | No preferred codec: the codec isn't touched, nothing is logged and nothing is noted for the Saved devices list; the manifest receiver starts the process and returns | all | | P2 |
 | C7 | After a reboot, without opening the app: applied | all | no lock screen | P2 |
 | C8 | After an update (`install -r`), without opening the app: applied | all | | P2 |
 | C9 | Never launched (fresh install) and force-stopped, then the device connects: records what happens. Characterization (D8) | all | | P2 |
 | C10 | The phone's Bluetooth turned off and on while the app is dead, then the device connects: applied | all | | P3 |
 | C11 | 20 reconnects in a row: every one verified, time to verified recorded | all | | P3 |
 | C12 | Doze and the `rare` and `restricted` standby buckets: still applied | all | | P3 |
-| C14 | After a reboot with a secure lock screen, A2DP connects before the first unlock: applied within 60 s of the unlock, without another connect; the time is recorded | all | a lock screen the suite can unlock | P1 |
+| C14 | After a reboot with a secure lock screen, A2DP connects before the first unlock: applied within 60 s of the unlock, without another connect; the time is recorded. The receiver noted the connect before the unlock | all | a lock screen the suite can unlock | P1 |
 | C15 | After the same reboot, the system reports the device to the companion service: after the unlock, and when it next connects | 33+ | a lock screen the suite can unlock | P1 |
-| C16 | After the same reboot, the device goes away and the app's process ends before the unlock: the unlock merges nothing, opening the main screen without a device merges the locked events | all | a lock screen the suite can unlock | P1 |
+| C16 | After the same reboot, the device goes away and the app's process ends before the unlock: the unlock merges nothing, opening the main screen without a device merges the locked events. The disconnect before the unlock is noted, and the main screen reads the saved devices' info, which only works once the user is unlocked, without failing | all | a lock screen the suite can unlock | P1 |
 
 C7, C14, C15 and C16 are in `tests/reboot_test.py`, which runs last (6.9).
 C14 to C16 check that the scenario happened: the user is still
@@ -428,6 +441,9 @@ check that the parts work together, not every detail on the way.
 | J7 | Rotating while a codec is applied: no crash, verified (manual 1.6) | all | P2 |
 | J8 | The log screen shows a real reconnect with its attempts; the anonymised export contains no addresses or names (log 2.5) | all | P2 |
 | J9 | On 31–32, unlinked and not exempt from auto revoke (`appops`), saving asks for the link and the dialog is accepted: `AUTO_REVOKE_PERMISSIONS_IF_UNUSED` is `ignore`. After unlinking it stays `ignore`, and saving again asks for no link (D27) | 31–32 | P1 |
+| J10 | A saved device in the Saved devices list: connected, its card has the Connected chip and View device opens its expanded card in the Connected list; away, the banner says when it last connected, in English on any phone (the S24 runs in German), and its chips change the preferred codec; the next connect applies the new one | all | P1 |
+| J11 | Delete a saved device that isn't connected and undo it: its preferred codec, its info and, on 33+, observing come back; deleted again without undo, nothing is stored or observed and the Saved list is empty | all | P2 |
+| J12 | Empty states with the headset off: with Bluetooth off the screen is asleep, Turn on Bluetooth and the system's dialog turn it on; without devices Open Bluetooth settings opens them; back in the app, the headset switched on shows its card. Needs the power switch | all | P2 |
 
 ## 5. Where journeys are worth it
 
@@ -435,12 +451,14 @@ Journeys are slow and break with UI changes, so they're kept to what only they
 can show:
 
 - **System UI the app depends on**: the permission dialog, the companion link
-  dialog and their results. No other level sees them.
+  dialog, the dialog that turns Bluetooth on, the Bluetooth settings and their
+  results. No other level sees them.
 - **Closing the loop**: a choice on the screen changes the codec on the device,
   and the device's codec shows on the screen. One journey per direction is
   enough to prove the wiring.
 - **The core promise from the user's view**: save, reconnect, the codec is
-  there (J3).
+  there (J3), also when the preferred codec was changed in the Saved devices
+  list while the device was away (J10).
 
 Everything else is covered more cheaply and more thoroughly elsewhere:
 
@@ -449,6 +467,8 @@ Everything else is covered more cheaply and more thoroughly elsewhere:
 | Every codec, rate, size and bitrate on the device | B2 | Through the snippet in seconds, through the UI in minutes per combination |
 | Retries, supersede, pending, timeouts | K1, K2, B3–B5 | Timing can't be controlled through the UI; the fake makes it deterministic |
 | Which chips, menus and prompts a device state shows, and which codec a chip selects | V2–V6 | Needs device states the testbed can't produce (API 34–35, no companion feature, unknown codec) |
+| Which saved devices the Saved list shows and how, and the empty states | V14, V15 | Needs states the testbed can't hold, like a device last connected days ago or several saved devices; J10–J12 check the wiring |
+| A pending codec change in the chips | V17 | The pending window is a second or two, too short to inspect through UiAutomator |
 | Log texts for every event type | V8, V9 | Needs events that real Bluetooth rarely produces; the sample log has all of them |
 | Applying on connect in the background | C1–C9 | There must be no UI or snippet involved |
 | Anonymisation | `LogExportTest`, J8 once | Pure logic |
@@ -491,7 +511,7 @@ hasn't saved a preferred codec:
 | Part | Baseline | Checked with | Restored by |
 | --- | --- | --- | --- |
 | Build | The build under test, its version stamp matches the working tree | `dumpsys package` | Installing, only in the suite setup, never between tests |
-| App data | Log empty, all settings at their defaults, so no preferred codecs | `run-as` listing `files/` and `shared_prefs/` | Resetting the app data, see below |
+| App data | Log empty, all settings at their defaults, so no preferred codecs and no saved devices' info | `run-as` reading the log and the preferences files | Resetting the app data, see below |
 | Package | Not stopped, so manifest receivers get broadcasts | `dumpsys package` | A broadcast to `TestLabelReceiver` without a label |
 | Nearby devices permission (31+) | Granted, not marked user-set or user-fixed | `dumpsys package` | `pm grant` after the reset, which clears the flags |
 | Link | The headset is linked on every phone, also where the app doesn't need it; nothing is observed | `cmd companiondevice list`; observing from `dumpsys companiondevice` on 33+. API 31–32 show observing nowhere, not even in the system's file | `cmd companiondevice disassociate` and `associate`, which also ends observing. The app doesn't observe on 31–32 (D27) |
@@ -655,9 +675,14 @@ phone it served last. After one connect from its Bluetooth settings, turning a
 Pixel's Bluetooth on connects within 6–8 s, whichever phone the Qudelix served
 before.
 
-The S24 never connects on its own when its Bluetooth is turned on over adb. A
-reconnect of the headset does, but only if it was the last phone the Qudelix
-served. So after a Pixel's run, step 3 connects it from its settings. After a
+The S24 doesn't connect on its own when its Bluetooth is turned on over adb
+while the Qudelix last served another phone, like after a Pixel's run; a
+reconnect of the headset doesn't connect it then either, since the Qudelix
+only reconnects to the phone it served last. So after a Pixel's run, step 3
+connects it from its settings. Once it was the last phone, it reconnects like
+the Pixels, but tests don't rely on either: J12 waits for the headset that
+was just switched on, which reconnects to the phone it served last, the one
+under test. After a
 reconnect the Qudelix pages its last phone for up to a minute and refuses
 others, so the taps go on for 90 s. The fixture waits 15 s after Bluetooth turns on,
 then reconnects the headset once, then taps; the sanity check uses the same
@@ -817,7 +842,7 @@ stores and the log (D3). A separate module gives it that:
 - It reaches the app's public declarations. Kotlin's `internal` is visible to
   the app's own test source sets, not to another module. Everything the RPCs
   need is public today (`CodecApplier.apply`, `cancel` and `pending`,
-  `A2dpProfileUtil`, `PreferredCodecStore`, `EventLog.get`,
+  `A2dpProfileUtil`, `SavedDeviceStore`, `EventLog.get`,
   `CompanionPresence.syncAll`). The reset functions (section 9) are public and
   marked `@VisibleForTesting`.
 - A module has one test runner. The app's own `androidTest` keeps
@@ -831,7 +856,9 @@ waits and returns the operation and its resolution), `startApplyCodec` (the
 same without waiting), `setCodecDirectly` (bypassing the applier, like another
 app would), `getCurrentCodec`, `getCapabilities`, `getPreferredCodec`,
 `setPreferredCodec` and `deletePreferredCodec` (which observe or stop
-observing the device, like the app does), `getPending`, `syncPresence` and
+observing the device, like the app does; setting also notes the device's name
+and, while it's connected, the time and the codecs it offers, like the app's
+Save, so the Saved devices list shows it), `getPending`, `syncPresence` and
 `resetForTest` (log, stores and singletons back to their defaults). Codecs pass
 as the app's `AndroidCodecConfig` JSON. Calls into the app run on the main
 thread, like the app's own calls.
@@ -922,7 +949,11 @@ needs the ones before it unless it says otherwise.
 13. **Locked reboot**: the lock screen classes (D24–D26), C14, C15 and C16.
     C14 and C15 pass where they apply since the receiver and the service are
     direct boot aware.
-14. **P3**; screenshot tests (V12) after the UI polish (D5); the release smoke
+14. **UI polish** (done): the journeys drive the new device card. J10 to J12
+    cover the Saved devices list and the empty states on the phones, and C1,
+    C2, C6, C14 and C16 check the saved devices' info the receiver notes. They
+    pass on all three phones.
+15. **P3**; screenshot tests (V12) after the UI polish (D5); the release smoke
     test once R8 is enabled.
 
 ## 11. Existing manual tests

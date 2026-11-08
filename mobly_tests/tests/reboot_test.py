@@ -191,14 +191,20 @@ class RebootTest(ColdStartBase):
         the unlock, without another connect.
 
         The manifest receiver applies it before the unlock. The log is only read
-        after it, so this also checks that the locked events are merged.
+        after it, so this also checks that the locked events are merged. The
+        receiver also notes the connect for the Saved devices list before the
+        unlock, in device protected storage.
         """
         self.require_lock_screen()
         codec = self.preferred_codec()
         mark = self.reboot_locked(codec)
+        booted = int(device_state.boot_time(self.adb))
+        locked_until = device_state.clock(self.adb)
         unlocked = self.unlock()
         ops = self.wait_for_applied(mark, codec, timeout=UNLOCK_APPLY_TIMEOUT)
         self.ad.log.info("C14: applied %.0f s after the unlock: %s", time.time() - unlocked, self.describe(ops))
+        # After the boot, so not the save or the shutdown's disconnect, and before the unlock
+        self.check_last_connected(booted, "the connect before the unlock", until=locked_until)
 
     def test_c15_companion_service_after_a_locked_reboot(self):
         """After the same locked reboot, the system reports the device to the companion service: after
@@ -255,6 +261,7 @@ class RebootTest(ColdStartBase):
         # then does am kill end the process. dumpsys shows the codec before it's verified, and the
         # device going away first would resolve the operation NOT_CONNECTED
         app.kill_cached(self.adb, timeout=30)
+        off = device_state.clock(self.adb)
         self.headset_off()
         if self.sdk >= 35:
             sim_helper.unattended_reboot(self.ad)
@@ -281,6 +288,8 @@ class RebootTest(ColdStartBase):
         connected = [d.address for d in bt_oracle.read(self.adb).devices if d.connected]
         asserts.assert_equal([], connected, "a device is connected, the main screen would log its codec")
 
+        # The main screen reads the saved devices' info on every poll, which only works once the user is
+        # unlocked; a crash would show in the invariants' crash buffer
         app.launch(self.adb)
         end = time.time() + MERGE_TIMEOUT
         while True:
@@ -292,7 +301,11 @@ class RebootTest(ColdStartBase):
                 asserts.fail(f"opening the main screen didn't merge the log within {MERGE_TIMEOUT:.0f} s: "
                              f"{len(merged)} of {lines} events, the device protected file has {remaining} lines")
             time.sleep(1)
+        asserts.assert_true(app.is_running(self.adb), "the main screen's process ended")
         app.go_home(self.adb)
+        # The receiver noted the disconnect before the unlock, and opening the main screen without the device
+        # kept it
+        self.check_last_connected(off, "the disconnect before the unlock", until=locked_until)
         # The merge appends the device protected events first, any interruptions follow them
         locked = merged[:lines]
         later = [e["type"] for e in locked if e["time"] > locked_until]

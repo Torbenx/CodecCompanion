@@ -29,6 +29,10 @@ APPLY_TIMEOUT = 60.0
 # companion service was disabled
 APPEARANCE_TIMEOUT = 180.0
 
+# The receiver notes a connect for the Saved devices list, then loads the log, which in a new process takes a
+# moment, and logs its trigger
+NOTED_BEFORE_TRIGGER_MS = 5000
+
 # Characterization tests (D8), their results recorded per range of API levels on the testbed (6.7),
 # see device_test.recorded().
 # C3: whether the preferred codec is applied when A2DP connects after the process was killed while
@@ -86,25 +90,33 @@ class ColdStartBase(BaselineTest):
             appeared = [e for e in self.log.events_after(after) if e["type"] == "DEVICE_APPEARED"]
             asserts.assert_equal(1, len(appeared), f"appearances from the sources {[e.get('message') for e in appeared]}")
 
+    def receiver_operation(self, after, timeout=10.0):
+        """The manifest receiver's resolved operation for A2DP connecting after seq [after]."""
+        end = time.time() + timeout
+        while True:
+            ops = self.resolved_after(after)
+            op = next((o for o in ops if o.trigger.get("message") == "manifest receiver"), None)
+            if op is not None:
+                return op
+            if time.time() >= end:
+                asserts.fail(f"the manifest receiver didn't handle A2DP connecting: {self.describe(ops)}")
+            time.sleep(1)
+
+    def check_connect_noted(self, op):
+        """The manifest receiver noted the connect of its operation [op] for the Saved devices list. It does so
+        just before it logs the trigger, so the times compare on the phone's clock, and the disconnect a
+        reconnect starts with can't pass for it."""
+        noted = self.last_connected()
+        trigger = op.trigger["time"]
+        self.ad.log.info("the connect was noted %s ms before its trigger", None if noted is None else trigger - noted)
+        asserts.assert_true(noted is not None and trigger - NOTED_BEFORE_TRIGGER_MS <= noted <= trigger,
+                            f"the connect wasn't noted: last connected {noted}, the receiver's trigger at {trigger}")
+
     def resolved_after(self, seq):
         return [op for op in app_log.operations(self.log.events_after(seq)) if op.resolution]
 
     def describe(self, ops):
         return "; ".join(f"{op.trigger['type']} ({op.trigger.get('message', '')}) -> {op.resolution}" for op in ops)
-
-    def headset_off(self):
-        """The device goes away: the headset off, or the phone's Bluetooth for headsets without power switch."""
-        if headset.POWER_SWITCH in self.headset.capabilities:
-            self.headset.power_off()
-        else:
-            device_state.set_bluetooth(self.adb, False)
-        bt_oracle.wait_connected(self.adb, self.address, timeout=20, connected=False)
-
-    def headset_on(self):
-        if headset.POWER_SWITCH in self.headset.capabilities:
-            self.headset.power_on()
-        else:
-            device_state.set_bluetooth(self.adb, True)
 
     def wait_until_applying(self, after, timeout=60.0):
         """Waits for an operation after seq [after] that has set a codec and is still open, returns it."""
@@ -131,10 +143,13 @@ class ColdStartBase(BaselineTest):
 class ColdStartTest(ColdStartBase):
     def test_c1_killed_app_applies_on_reconnect(self):
         """App process killed, the headset reconnects: applied. The manifest receiver handles A2DP connecting
-        on every API level (D17), since API 33 the service may apply it first."""
+        on every API level (D17), since API 33 the service may apply it first. The receiver also notes the
+        disconnect and the connect for the Saved devices list."""
         codec = self.preferred_codec()
         self.save_preferred(codec)
+        off = device_state.clock(self.adb)
         self.headset_off()
+        self.check_last_connected(off, "the disconnect")
         # Since API 33 the system unbinds the service once the device is gone, after some seconds
         time.sleep(15)
         app.kill(self.adb)
@@ -143,25 +158,19 @@ class ColdStartTest(ColdStartBase):
         mark = self.log.last_seq()
         self.headset_on()
         self.wait_for_applied(mark, codec)
-        end = time.time() + 10
-        while True:
-            ops = self.resolved_after(mark)
-            if any(op.trigger.get("message") == "manifest receiver" for op in ops):
-                break
-            if time.time() >= end:
-                asserts.fail(f"the manifest receiver didn't handle A2DP connecting: {self.describe(ops)}")
-            time.sleep(1)
-        self.ad.log.info("C1: %s", self.describe(ops))
+        self.check_connect_noted(self.receiver_operation(mark))
+        self.ad.log.info("C1: %s", self.describe(self.resolved_after(mark)))
         self.check_one_appearance(mark)
 
     def test_c2_app_in_front_applies_on_reconnect(self):
-        """The same with the main screen open (manual 2.1)."""
+        """The same with the main screen open (manual 2.1), and the receiver notes the connect."""
         codec = self.preferred_codec()
         self.save_preferred(codec)
         app.launch(self.adb)
         mark = self.log.last_seq()
         self.headset.reconnect(self.adb)
         ops = self.wait_for_applied(mark, codec)
+        self.check_connect_noted(self.receiver_operation(mark))
         self.ad.log.info("C2 in front: %s", self.describe(ops))
         self.check_one_appearance(mark)
 
@@ -175,6 +184,7 @@ class ColdStartTest(ColdStartBase):
         mark = self.log.last_seq()
         self.headset.reconnect(self.adb)
         ops = self.wait_for_applied(mark, codec)
+        self.check_connect_noted(self.receiver_operation(mark))
         self.ad.log.info("C2 in background: %s", self.describe(ops))
         self.check_one_appearance(mark)
 
@@ -254,8 +264,8 @@ class ColdStartTest(ColdStartBase):
         asserts.assert_false(same_format(codec, bt_oracle.active_codec(self.adb, self.address)), "the codec was applied")
 
     def test_c6_no_preferred_codec(self):
-        """Without a preferred codec the codec isn't touched and nothing is logged. The manifest receiver
-        starts the process and returns."""
+        """Without a preferred codec the codec isn't touched and nothing is logged or noted. The manifest
+        receiver starts the process and returns."""
         app.kill(self.adb)
         mark = self.log.last_seq()
         self.headset.reconnect(self.adb)
@@ -265,6 +275,8 @@ class ColdStartTest(ColdStartBase):
         running = app.is_running(self.adb)
         self.ad.log.info("C6: process running %s, events %s", running, [e["type"] for e in events])
         asserts.assert_equal([], events, "the app logged something")
+        # The receiver notes connects only for saved devices
+        asserts.assert_equal({}, baseline.saved_device_info(self.adb), "the app keeps info of an unsaved device")
         dumped = bt_oracle.active_codec(self.adb, self.address)
         asserts.assert_true(self.baseline.own_codec.same_config(dumped), f"dumpsys shows {dumped}")
 
