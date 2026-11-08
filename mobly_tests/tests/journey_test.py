@@ -21,7 +21,7 @@ from lib.device_test import BaselineTest
 
 SNIPPET = "snippet"
 SBC_44_16 = Codec(bt_oracle.SBC, 0x1, 0x1)
-SBC_TEXTS = ("SBC", "44100 Hz", "16 bits/sample")
+SBC_TEXTS = ("SBC", "44100 Hz", "16-bit")
 APPLY_TIMEOUT = 60.0
 EXPORTS = "cache/exports"
 MAC = re.compile(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
@@ -30,7 +30,7 @@ MAC = re.compile(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
 def chips(codec):
     """The chips the collapsed card shows for [codec]."""
     return (codec.name, f"{bt_oracle.SAMPLE_RATES[codec.sample_rate]} Hz",
-            f"{bt_oracle.BITS_PER_SAMPLE[codec.bits_per_sample]} bits/sample")
+            f"{bt_oracle.BITS_PER_SAMPLE[codec.bits_per_sample]}-bit")
 
 
 class JourneyTest(BaselineTest):
@@ -45,16 +45,20 @@ class JourneyTest(BaselineTest):
     def main_screen(self):
         return screens.MainScreen(self.ad, self.headset).open()
 
-    def choose(self, screen, chip, codec):
-        """Chooses a codec with the chips of the expanded card, and checks it's applied."""
+    def choose(self, screen, chip, codec, link=False):
+        """Chooses a codec with the chips of the expanded card, and checks it's applied. With [link] the
+        device isn't linked where changing the codec needs it, API 34 and 35, so the system's dialog links it first."""
         mark = self.log.last_seq()
-        screen.toggle()
         screen.tap_chip(chip)
+        if link:
+            screen.accept_link_dialog()
         op = self.log.wait_for_operation(after=mark, trigger="USER_SET_CODEC", device=self.address, timeout=30)
         asserts.assert_equal("CODEC_VERIFIED", op.resolution, str(op))
+        if link:
+            asserts.assert_true(op.of_type("ASSOCIATION_REQUESTED"), f"changing the codec didn't ask for the link: {op}")
         dumped = bt_oracle.active_codec(self.adb, self.address)
         asserts.assert_true(same_format(dumped, codec), f"dumpsys shows {dumped}")
-        screen.toggle()
+        screen.collapse()
 
     def wait_for_applied(self, after, codec, timeout=APPLY_TIMEOUT):
         """Waits until A2DP is connected with [codec] and an operation after seq [after] verified it.
@@ -73,36 +77,44 @@ class JourneyTest(BaselineTest):
             time.sleep(1)
 
     def save_preferred(self, screen):
-        """Saves the card's codec as preferred with the status chip; the baseline's link means no dialog."""
+        """Saves the card's codec as preferred with Save as preferred; the baseline's link means no dialog."""
         mark = self.log.last_seq()
-        screen.tap_status()
+        asserts.assert_equal("none", screen.preferred_status(), "the banner before saving")
+        screen.tap_save()
         op = self.log.wait_for_operation(after=mark, trigger="USER_SAVE_PREFERRED", device=self.address, timeout=30)
         asserts.assert_equal("PREFERRED_SAVED", op.resolution, str(op))
-        asserts.assert_equal("Preferred Codec", screen.status(), "the status chip after saving")
+        self.assert_preferred_active(screen, "after saving")
+
+    def assert_preferred_active(self, screen, when):
+        """The banner says the preferred codec is active, and the collapsed card has its chip. The card offers Save
+        as preferred exactly when the banner doesn't say so, the JVM tests cover that."""
+        asserts.assert_true(screen.wait_preferred("active"), f"the banner {when}: {screen.preferred_status()}")
+        asserts.assert_true(screen.preferred_chip_shown(), f"no Preferred Codec chip {when}")
 
     def test_j2_choose_a_codec_with_the_chips(self):
         """Choosing SBC on the card changes the codec, and the card and the log show it (manual 1.1)."""
         screen = self.main_screen()
         self.choose(screen, "SBC", SBC_44_16)
-        asserts.assert_true(screen.shows("SBC", "44100 Hz", "16 bits/sample"), "the card doesn't show SBC")
+        asserts.assert_true(screen.shows(*SBC_TEXTS), "the card doesn't show SBC")
 
     def test_j3_save_as_preferred_and_reconnect(self):
         """Saving the codec as preferred, linking where needed; after a reconnect it's applied and shown."""
-        # Since API 33 saving links the device, on 31 and 32 only an app without any link, J9. On API
-        # 36 an unlinked device's codec is unreadable, so there is nothing to save; J6 covers that.
+        # Since API 33 saving links the device, on 31 and 32 only an app without any link, J9. On API 34
+        # and 35 changing the codec already links it. On API 36 an unlinked device's codec is unreadable,
+        # so there is nothing to save; J6 covers that.
         linking = 33 <= self.sdk < 36
         if linking:
             companion.unlink(self.adb, app.PACKAGE, self.address)
         screen = self.main_screen()
-        self.choose(screen, "SBC", SBC_44_16)
+        self.choose(screen, "SBC", SBC_44_16, link=linking and self.sdk >= 34)
         mark = self.log.last_seq()
-        asserts.assert_equal("Save As Preferred Codec", screen.status(), "the status chip")
-        screen.tap_status()
-        if linking:
+        asserts.assert_equal("none", screen.preferred_status(), "the banner before saving")
+        screen.tap_save()
+        if linking and self.sdk == 33:
             screen.accept_link_dialog()
         op = self.log.wait_for_operation(after=mark, trigger="USER_SAVE_PREFERRED", device=self.address, timeout=30)
         asserts.assert_equal("PREFERRED_SAVED", op.resolution, str(op))
-        asserts.assert_equal("Preferred Codec", screen.status(), "the status chip after saving")
+        self.assert_preferred_active(screen, "after saving")
         if linking:
             asserts.assert_true(companion.is_linked(self.adb, app.PACKAGE, self.address), "the device isn't linked")
         app.go_home(self.adb)
@@ -110,8 +122,8 @@ class JourneyTest(BaselineTest):
         self.headset.reconnect(self.adb)
         self.wait_for_applied(mark, SBC_44_16)
         screen = self.main_screen()
-        asserts.assert_true(screen.shows("SBC", "44100 Hz", "16 bits/sample"), "the card doesn't show SBC")
-        asserts.assert_equal("Preferred Codec", screen.status(), "the status chip after the reconnect")
+        asserts.assert_true(screen.shows(*SBC_TEXTS), "the card doesn't show SBC")
+        self.assert_preferred_active(screen, "after the reconnect")
 
     def test_j6_an_unlinked_device_asks_to_be_linked(self):
         """Since API 34 an unlinked device asks for the link; on 36 its codec only shows once it's linked."""
@@ -119,8 +131,7 @@ class JourneyTest(BaselineTest):
         companion.unlink(self.adb, app.PACKAGE, self.address)
         screen = self.main_screen()
         if self.sdk >= 36:
-            asserts.assert_true(self.ad.ui(text=f"Link {self.headset.name} to see and change its codec.").wait.exists(screens.TIMEOUT),
-                                "the card doesn't ask for the link")
+            asserts.assert_true(screen.shows_link_prompt(), "the card doesn't ask for the link")
             asserts.assert_false(screen.chip("96000 Hz").exists, "the codec shows without a link")
         mark = self.log.last_seq()
         screen.tap_link()
@@ -140,7 +151,7 @@ class JourneyTest(BaselineTest):
         screen = self.main_screen()
         self.choose(screen, "SBC", SBC_44_16)
         mark = self.log.last_seq()
-        screen.tap_status()
+        screen.tap_save()
         screen.accept_link_dialog()
         op = self.log.wait_for_operation(after=mark, trigger="USER_SAVE_PREFERRED", device=self.address, timeout=30)
         asserts.assert_equal("PREFERRED_SAVED", op.resolution, str(op))
@@ -150,10 +161,10 @@ class JourneyTest(BaselineTest):
 
         companion.unlink(self.adb, app.PACKAGE, self.address)
         asserts.assert_equal("ignore", app.auto_revoke_mode(self.adb), "unlinking ended the exemption")
-        screen.tap_menu_item("delete_preferred")
-        asserts.assert_equal("Save As Preferred Codec", screen.status(), "the status chip after deleting")
+        screen.tap_delete()
+        asserts.assert_true(screen.wait_preferred("none"), f"the banner after deleting: {screen.preferred_status()}")
         mark = self.log.last_seq()
-        screen.tap_status()
+        screen.tap_save()
         op = self.log.wait_for_operation(after=mark, trigger="USER_SAVE_PREFERRED", device=self.address, timeout=30)
         asserts.assert_equal("PREFERRED_SAVED", op.resolution, str(op))
         asserts.assert_false(op.of_type("ASSOCIATION_REQUESTED"), f"saving asked for the link again: {op}")
@@ -193,35 +204,39 @@ class JourneyTest(BaselineTest):
         try:
             screen = self.main_screen()
             self.save_preferred(screen)
+            # Collapsed before the change, so only the change is timed
+            screen.collapse()
             getattr(self.ad, SNIPPET).setCodecDirectly(self.address, SBC_44_16.to_app())
             changed = time.time()
             bt_oracle.wait_for(self.adb, lambda s: same_format(SBC_44_16, s.device(self.address).codec), 10, what="SBC")
             asserts.assert_true(screen.shows(*SBC_TEXTS), "the card doesn't show SBC")
             self.ad.log.info("J4: the card showed SBC %.1f s after the change", time.time() - changed)
             asserts.assert_true(time.time() - changed <= 2.0 + 1.5, "the card took longer than 2 s, plus the reads")
-            asserts.assert_equal("Save As Preferred Codec", screen.status(), "the status chip after the change")
+            asserts.assert_true(screen.preferred_chip_shown(False), "the Preferred Codec chip shows after the change")
+            asserts.assert_equal("saved", screen.preferred_status(), "the banner after the change")
             mark = self.log.last_seq()
-            screen.tap_menu_item("restore_preferred")
+            screen.tap_restore()
             op = self.log.wait_for_operation(after=mark, trigger="USER_RESTORE_PREFERRED", device=self.address, timeout=30)
             asserts.assert_equal("CODEC_VERIFIED", op.resolution, str(op))
             asserts.assert_true(same_format(own, bt_oracle.active_codec(self.adb, self.address)), "not restored")
             asserts.assert_true(screen.shows(*chips(own)), f"the card doesn't show {own}")
-            asserts.assert_equal("Preferred Codec", screen.status(), "the status chip after restoring")
+            self.assert_preferred_active(screen, "after restoring")
         finally:
             self.ad.unload_snippet(SNIPPET)
 
     def test_j5_delete_the_preferred_codec(self):
-        """After deleting the preferred codec, a reconnect leaves the codec alone and the menu has no
-        preferred codec items."""
+        """After deleting the preferred codec, the card offers to save it again and a reconnect leaves the
+        codec alone."""
         screen = self.main_screen()
         self.choose(screen, "SBC", SBC_44_16)
         self.save_preferred(screen)
         mark = self.log.last_seq()
-        screen.tap_menu_item("delete_preferred")
+        screen.tap_delete()
         self.log.wait_for_event("PREFERRED_DELETED", after=mark, timeout=10)
-        # Debug builds keep the menu for unlinking where the device is linked
-        asserts.assert_equal([], [i for i in screen.menu_items() if i != "unlink_device"], "the menu after deleting")
-        asserts.assert_equal("Save As Preferred Codec", screen.status(), "the status chip after deleting")
+        asserts.assert_true(screen.wait_preferred("none"), f"the banner after deleting: {screen.preferred_status()}")
+        asserts.assert_false(screen.banner().child(res="restore_preferred").exists, "Restore is offered after deleting")
+        asserts.assert_true(screen.scroll_to(res="save_preferred"), "Save as preferred isn't offered after deleting")
+        asserts.assert_true(screen.preferred_chip_shown(False), "the Preferred Codec chip shows after deleting")
         app.go_home(self.adb)
         mark = self.log.last_seq()
         self.headset.reconnect(self.adb)
@@ -241,7 +256,6 @@ class JourneyTest(BaselineTest):
             screen = self.main_screen()
             pid = app.pid(self.adb)
             mark = self.log.last_seq()
-            screen.toggle()
             screen.tap_chip("SBC")
             device_state.put_setting(self.adb, "system", "user_rotation", "1")
             op = self.log.wait_for_operation(after=mark, trigger="USER_SET_CODEC", device=self.address, timeout=30)

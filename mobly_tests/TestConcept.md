@@ -421,10 +421,10 @@ check that the parts work together, not every detail on the way.
 | --- | --- | --- | --- |
 | J1 | First start: grant the permission in the system dialog, the card shows the codec `dumpsys` reports. Denying twice shows the settings hint | 31+ | P2 |
 | J2 | Choose codecs with the chips: `dumpsys`, the card and the log agree (manual 1.1) | all | P1 |
-| J3 | Save as preferred; on 33–35 the device starts unlinked, so the companion dialog appears and is accepted; the chip says "Preferred Codec"; after a reconnect the preferred codec is active and shown | all | P1 |
-| J4 | A codec change by another app shows on the card within 2 s; Restore Preferred Codec brings it back (manual 1.2, 2.2). The snippet's `setCodecDirectly` makes the change, the same call the developer options make: their screens differ too much between the phones, and the API 28 Pixel doesn't open them from their intent | all | P2 |
-| J5 | Delete the preferred codec: after a reconnect the codec is left alone and the menu is gone (debug builds keep it for Unlink where the device is linked) | all | P2 |
-| J6 | An unlinked device asks to be linked (on 36 because its codec is unreadable, on 34–35 once it has a preferred codec); Allow and the dialog make its codec appear and changeable | 34+ | P1 |
+| J3 | Save as preferred; on 33–35 the device starts unlinked, so the companion dialog appears and is accepted (on 34–35 already when choosing the codec); the banner says the preferred codec is active and the collapsed card has the "Preferred Codec" chip; after a reconnect the preferred codec is active and shown | all | P1 |
+| J4 | A codec change by another app shows on the card within 2 s; the banner's Restore brings it back (manual 1.2, 2.2). The snippet's `setCodecDirectly` makes the change, the same call the developer options make: their screens differ too much between the phones, and the API 28 Pixel doesn't open them from their intent | all | P2 |
+| J5 | Delete the preferred codec with the banner's Delete: the card offers Save as preferred again, without Restore or the "Preferred Codec" chip, and after a reconnect the codec is left alone | all | P2 |
+| J6 | An unlinked device asks to be linked (on 36 because its codec is unreadable, on 34–35 once it has a preferred codec); Link Device and the dialog make its codec appear and changeable | 34+ | P1 |
 | J7 | Rotating while a codec is applied: no crash, verified (manual 1.6) | all | P2 |
 | J8 | The log screen shows a real reconnect with its attempts; the anonymised export contains no addresses or names (log 2.5) | all | P2 |
 | J9 | On 31–32, unlinked and not exempt from auto revoke (`appops`), saving asks for the link and the dialog is accepted: `AUTO_REVOKE_PERMISSIONS_IF_UNUSED` is `ignore`. After unlinking it stays `ignore`, and saving again asks for no link (D27) | 31–32 | P1 |
@@ -841,8 +841,8 @@ thread, like the app's own calls.
 1. A version stamp in debug builds, for example the commit as `versionNameSuffix`,
    so the harness can tell what's installed.
 2. `testTagsAsResourceId` on the root of both screens, and test tags on the
-   elements tests use: the device card per address, chips, status chip, menu
-   items, the link button, log entries per `seq`.
+   elements tests use: the device card per address, chips, the preferred codec's chip, banner and
+   buttons, menu items, the link button, log entries per `seq`.
 3. Composables as top-level functions that take state and callbacks, so UI
    tests can render them with fake data. The activities keep their logic (D1);
    the helpers the composables call move with them (D13). The log screen takes
