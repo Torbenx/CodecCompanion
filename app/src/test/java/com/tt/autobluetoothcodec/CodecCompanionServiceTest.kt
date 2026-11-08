@@ -64,10 +64,17 @@ class CodecCompanionServiceTest {
     /** The operations the service started, by trigger. */
     private fun operations(type: EventType) = events.filter { it.type == type }
 
-    /** Links [ADDRESS] like the companion device manager since API 33, and returns the association's id. */
-    private fun link(): Int {
+    /**
+     * Links [ADDRESS] like the companion device manager since API 33, with [displayName] if it isn't null, and returns
+     * the association's id.
+     */
+    private fun link(displayName: String? = null): Int {
         val companionManager = context.getSystemService(CompanionDeviceManager::class.java)
-        Shadow.extract<ObservingCompanionDeviceManager>(companionManager).addAssociation(ADDRESS.lowercase())
+        val shadow = Shadow.extract<ObservingCompanionDeviceManager>(companionManager)
+        if (displayName == null)
+            shadow.addAssociation(ADDRESS.lowercase())
+        else
+            shadow.addAssociation(ADDRESS.lowercase(), displayName)
         return companionManager.myAssociations.single().id
     }
 
@@ -129,6 +136,32 @@ class CodecCompanionServiceTest {
         // No longer present, so A2DP connecting again doesn't apply
         a2dpConnected(ADDRESS)
         assertEquals(1, operations(EventType.A2DP_CONNECTED).count { it.message == "companion service" })
+    }
+
+    @Test
+    @Config(shadows = [ObservingCompanionDeviceManager::class])
+    fun withoutItsNameTheDeviceIsLoggedWithTheNameItWasLinkedWith() {
+        // Like Bluetooth turned off, which makes the device disappear: the test devices have no name
+        link("Headset")
+        service.onDeviceAppeared(ADDRESS)
+        service.onDeviceDisappeared(ADDRESS.lowercase())
+        assertEquals(LogDevice(ADDRESS, "Headset"), operations(EventType.DEVICE_APPEARED).single().device)
+        assertEquals(LogDevice(ADDRESS, "Headset"), operations(EventType.DEVICE_DISAPPEARED).single().device)
+    }
+
+    @Test
+    @Config(sdk = [36], shadows = [ObservingCompanionDeviceManager::class])
+    fun withoutItsNameTheDeviceIsLoggedWithTheNameItWasLinkedWithSince36() {
+        val id = link("Headset")
+        presence(id, DevicePresenceEvent.EVENT_BT_CONNECTED)
+        presence(id, DevicePresenceEvent.EVENT_BT_DISCONNECTED)
+        assertEquals(LogDevice(ADDRESS, "Headset"), operations(EventType.DEVICE_DISAPPEARED).single().device)
+    }
+
+    @Test
+    fun withoutAnyNameTheDeviceIsLoggedWithItsAddress() {
+        service.onDeviceDisappeared(ADDRESS.lowercase())
+        assertEquals(LogDevice(ADDRESS), operations(EventType.DEVICE_DISAPPEARED).single().device)
     }
 
     @Test

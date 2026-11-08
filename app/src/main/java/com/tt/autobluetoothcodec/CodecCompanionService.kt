@@ -102,8 +102,7 @@ class CodecCompanionService : CompanionDeviceService() {
     /** Since API 36 [source] is the one the device appeared on first. */
     private fun deviceAppeared(address: String, source: String?) {
         val device = getDevice(address)
-        EventLog.get(this).log(EventType.DEVICE_APPEARED,
-            device?.let { LogDevice.of(it) } ?: LogDevice(address.uppercase()), message = source)
+        EventLog.get(this).log(EventType.DEVICE_APPEARED, logDevice(address, device), message = source)
         if (device == null || SavedDeviceStore.getPreferred(this, device) == null)
             return
         presentDevices.add(device.address)
@@ -117,8 +116,7 @@ class CodecCompanionService : CompanionDeviceService() {
     /** Since API 36 [source] is the last one the device was seen on. */
     private fun deviceDisappeared(address: String, source: String?) {
         val device = getDevice(address)
-        EventLog.get(this).log(EventType.DEVICE_DISAPPEARED,
-            device?.let { LogDevice.of(it) } ?: LogDevice(address.uppercase()), message = source)
+        EventLog.get(this).log(EventType.DEVICE_DISAPPEARED, logDevice(address, device), message = source)
         if (device == null)
             return
         presentDevices.remove(device.address)
@@ -146,6 +144,21 @@ class CodecCompanionService : CompanionDeviceService() {
             if (!applier.cancel(operation, EventType.ERROR, e.toString()) && operation.isOpen)
                 operation.resolve(EventType.ERROR, message = e.toString())
         }
+    }
+
+    /**
+     * The device as the log shows it. Its name can't be read while Bluetooth is off, so a device that disappears
+     * because Bluetooth was turned off would be logged with only its address. Then the name the device had when it was
+     * linked stands in.
+     */
+    private fun logDevice(address: String, device: BluetoothDevice?): LogDevice {
+        val logged = device?.let { LogDevice.of(it) } ?: LogDevice(address.uppercase())
+        if (logged.name != null)
+            return logged
+        val linkedName = getSystemService(CompanionDeviceManager::class.java)?.myAssociations
+            ?.firstOrNull { it.deviceMacAddress?.toString().equals(address, ignoreCase = true) }
+            ?.displayName?.toString()
+        return logged.copy(name = linkedName)
     }
 
     private fun getDevice(address: String): BluetoothDevice? {
