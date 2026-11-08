@@ -9,9 +9,15 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -165,6 +171,29 @@ class MainScreenTest {
         text(NAME).assertDoesNotExist()
         compose.onNodeWithTag("list_connected").performClick()
         text(NAME).assertExists()
+    }
+
+    @Test
+    fun aSwipeShowsTheOtherListWithTheSwitchClosed() {
+        show(state(device(preferred = ldac())))
+        compose.onNodeWithTag("list_saved").assertDoesNotExist()
+        compose.onRoot().performTouchInput { swipeLeft() }
+        text("Saved devices").assertExists()
+        compose.onNodeWithTag("saved_$ADDRESS").assertExists()
+        compose.onNodeWithTag(deviceTag(device())).assertDoesNotExist()
+        compose.onRoot().performTouchInput { swipeRight() }
+        text("Connected devices").assertExists()
+        compose.onNodeWithTag(deviceTag(device())).assertExists()
+    }
+
+    @Test
+    fun aSwipeMovesTheSwitchsSelection() {
+        show(device())
+        compose.onNodeWithTag("list_toggle").performClick()
+        compose.onNodeWithTag("list_connected").assertIsSelected()
+        compose.onRoot().performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("list_saved").assertIsSelected()
+        compose.onNodeWithTag("list_connected").assertIsNotSelected()
     }
 
     @Test

@@ -25,6 +25,8 @@ import android.widget.Toast
 import android.text.format.DateUtils
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.SnackbarDuration
@@ -32,10 +34,15 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
@@ -86,7 +93,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -103,7 +109,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -1617,14 +1622,19 @@ private fun LinkBanner(device: DeviceData, canLink: Boolean) {
 }
 
 @Composable
-private fun PermissionRequired(contentPadding: PaddingValues, permissionState: PermissionState, actions: MainScreenActions) {
+private fun PermissionRequired(
+    contentPadding: PaddingValues,
+    permissionState: PermissionState,
+    actions: MainScreenActions,
+    scroll: ScrollState,
+) {
     val title = "Codec needs your permission"
     val reason = "Auto Bluetooth Codec needs the Nearby devices permission to access the codec of your Bluetooth devices."
     if (permissionState == PermissionState.PERMANENTLY_DENIED) {
         EmptyState(DogScene.AT_DOOR, title, "Open settings", actions::openAppSettings, contentPadding,
-            listOf(reason, "Allow it in the app settings under Permissions."))
+            listOf(reason, "Allow it in the app settings under Permissions."), scroll)
     } else {
-        EmptyState(DogScene.AT_DOOR, title, "Grant permission", actions::requestPermission, contentPadding, listOf(reason))
+        EmptyState(DogScene.AT_DOOR, title, "Grant permission", actions::requestPermission, contentPadding, listOf(reason), scroll)
     }
 }
 
@@ -1680,7 +1690,8 @@ private const val EXPAND_MILLIS = 400L
  * The main screen: the connected devices with their codecs, or the saved devices with their preferred codecs, or an
  * empty state with a way out. The cards start collapsed, except those of the devices in [initiallyExpanded], by
  * address, for the previews, which can start with [initialList] as well. Each list keeps which cards are expanded and
- * how far it's scrolled while the other one shows.
+ * how far it's scrolled while the other one shows. The lists sit side by side: a swipe moves between them, whether
+ * the switch is open or not, and the switch slides the other one in.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -1690,7 +1701,8 @@ internal fun MainScreen(
     initiallyExpanded: Set<String> = emptySet(),
     initialList: DeviceList = DeviceList.CONNECTED,
 ) {
-    var list by rememberSaveable { mutableStateOf(initialList) }
+    // The lists side by side, swiped between or slid in by the switch
+    val pager = rememberPagerState(initialPage = initialList.ordinal) { DeviceList.entries.size }
     var connectedExpanded by rememberSaveable(saver = AddressSetSaver) { mutableStateOf(initiallyExpanded) }
     var savedExpanded by rememberSaveable(saver = AddressSetSaver) { mutableStateOf(initiallyExpanded) }
     val connectedScroll = rememberScrollState()
@@ -1699,89 +1711,120 @@ internal fun MainScreen(
     var revealAddress by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    // The scroll state each list's page shows, the bar is tinted while the one in view is scrolled
+    val scrolls = remember { mutableStateMapOf<DeviceList, ScrollState>() }
+    val scrolled by remember {
+        derivedStateOf { (scrolls[DeviceList.entries[pager.currentPage]]?.value ?: 0) > 0 }
+    }
+    fun show(list: DeviceList) {
+        scope.launch { pager.animateScrollToPage(list.ordinal) }
+    }
+    // Swiping away from the connected devices drops a pending View device
+    LaunchedEffect(pager.settledPage) {
+        if (pager.settledPage != DeviceList.CONNECTED.ordinal)
+            revealAddress = null
+    }
     Scaffold(
         // Lets UiAutomator find the elements by their test tags
-        modifier = Modifier.semantics { testTagsAsResourceId = true }.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = Modifier.semantics { testTagsAsResourceId = true },
         topBar = {
-            MainTopBar(list, {
-                list = it
+            MainTopBar(DeviceList.entries[pager.currentPage], {
                 revealAddress = null
-            }, scrollBehavior, actions)
+                show(it)
+            }, scrolled, actions)
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         // Also keeps the content clear of display cutouts in landscape
         contentWindowInsets = WindowInsets.safeDrawing
     ) { innerPadding ->
-        when {
-            list == DeviceList.SAVED && state.savedDevices.isEmpty() ->
-                EmptyState(DogScene.TOY_BOX, "Codec has no saved devices yet", "Show connected devices",
-                    { list = DeviceList.CONNECTED }, innerPadding)
-            // Without it the saved devices' connections are unknown
-            state.permissionState != PermissionState.GRANTED ->
-                PermissionRequired(innerPadding, state.permissionState, actions)
-            list == DeviceList.SAVED ->
-                DeviceColumn(savedScroll, innerPadding) {
-                    for (device in state.savedDevices) key(device.address) {
-                        SavedDeviceCard(
-                            device,
-                            extended = device.address in savedExpanded,
-                            onToggle = { savedExpanded = savedExpanded.toggled(device.address) },
-                            onView = {
-                                val address = state.devices.firstOrNull { it.address.equals(device.address, ignoreCase = true) }
-                                    ?.address ?: device.address
-                                connectedExpanded = connectedExpanded + address
-                                revealAddress = address
-                                list = DeviceList.CONNECTED
-                            },
-                            onDelete = {
-                                actions.deletePreferred(device.address)
-                                scope.launch {
-                                    snackbarHostState.currentSnackbarData?.dismiss()
-                                    val result = snackbarHostState.showSnackbar("${device.name} deleted", "Undo",
-                                        duration = SnackbarDuration.Short)
-                                    if (result == SnackbarResult.ActionPerformed)
-                                        actions.undoDelete(device.address)
-                                }
-                            },
-                            actions
-                        )
-                    }
-                }
-            !state.bluetoothEnabled ->
-                EmptyState(DogScene.ASLEEP, "Codec is asleep", "Turn on Bluetooth", actions::enableBluetooth, innerPadding,
-                    listOf("Bluetooth is off"))
-            state.devices.isEmpty() -> if (state.devicesKnown) {
-                // Only A2DP devices are listed, a connected watch or keyboard doesn't count
-                EmptyState(DogScene.SNIFFING, "Codec hasn't found any audio devices", "Open Bluetooth settings",
-                    actions::openBluetoothSettings, innerPadding)
-            }
-            else ->
-                DeviceColumn(connectedScroll, innerPadding) {
-                    for (device in state.devices) key(device.address) {
-                        val requester = remember { BringIntoViewRequester() }
-                        if (revealAddress == device.address) {
-                            LaunchedEffect(Unit) {
-                                // Once it's laid out, and again once it's expanded
-                                withFrameNanos {}
-                                requester.bringIntoView()
-                                delay(EXPAND_MILLIS)
-                                requester.bringIntoView()
-                                revealAddress = null
-                            }
+        HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+            val list = DeviceList.entries[page]
+            when {
+                list == DeviceList.SAVED && state.savedDevices.isEmpty() ->
+                    EmptyState(DogScene.TOY_BOX, "Codec has no saved devices yet", "Show connected devices",
+                        { show(DeviceList.CONNECTED) }, innerPadding, scroll = rememberScrollState().shownBy(list, scrolls))
+                // Without it the saved devices' connections are unknown
+                state.permissionState != PermissionState.GRANTED ->
+                    PermissionRequired(innerPadding, state.permissionState, actions,
+                        rememberScrollState().shownBy(list, scrolls))
+                list == DeviceList.SAVED ->
+                    DeviceColumn(savedScroll.shownBy(list, scrolls), innerPadding) {
+                        for (device in state.savedDevices) key(device.address) {
+                            SavedDeviceCard(
+                                device,
+                                extended = device.address in savedExpanded,
+                                onToggle = { savedExpanded = savedExpanded.toggled(device.address) },
+                                onView = {
+                                    val address = state.devices.firstOrNull { it.address.equals(device.address, ignoreCase = true) }
+                                        ?.address ?: device.address
+                                    connectedExpanded = connectedExpanded + address
+                                    revealAddress = address
+                                    show(DeviceList.CONNECTED)
+                                },
+                                onDelete = {
+                                    actions.deletePreferred(device.address)
+                                    scope.launch {
+                                        snackbarHostState.currentSnackbarData?.dismiss()
+                                        val result = snackbarHostState.showSnackbar("${device.name} deleted", "Undo",
+                                            duration = SnackbarDuration.Short)
+                                        if (result == SnackbarResult.ActionPerformed)
+                                            actions.undoDelete(device.address)
+                                    }
+                                },
+                                actions
+                            )
                         }
-                        DeviceCard(
-                            device,
-                            extended = device.address in connectedExpanded,
-                            onToggle = { connectedExpanded = connectedExpanded.toggled(device.address) },
-                            state,
-                            actions,
-                            Modifier.bringIntoViewRequester(requester)
-                        )
                     }
+                !state.bluetoothEnabled ->
+                    EmptyState(DogScene.ASLEEP, "Codec is asleep", "Turn on Bluetooth", actions::enableBluetooth, innerPadding,
+                        listOf("Bluetooth is off"), rememberScrollState().shownBy(list, scrolls))
+                state.devices.isEmpty() -> if (state.devicesKnown) {
+                    // Only A2DP devices are listed, a connected watch or keyboard doesn't count
+                    EmptyState(DogScene.SNIFFING, "Codec hasn't found any audio devices", "Open Bluetooth settings",
+                        actions::openBluetoothSettings, innerPadding, scroll = rememberScrollState().shownBy(list, scrolls))
                 }
+                else ->
+                    DeviceColumn(connectedScroll.shownBy(list, scrolls), innerPadding) {
+                        for (device in state.devices) key(device.address) {
+                            val requester = remember { BringIntoViewRequester() }
+                            if (revealAddress == device.address) {
+                                LaunchedEffect(Unit) {
+                                    // Once the list has slid in and it's laid out, and again once it's expanded
+                                    snapshotFlow { pager.isScrollInProgress }.first { !it }
+                                    withFrameNanos {}
+                                    requester.bringIntoView()
+                                    delay(EXPAND_MILLIS)
+                                    requester.bringIntoView()
+                                    revealAddress = null
+                                }
+                            }
+                            DeviceCard(
+                                device,
+                                extended = device.address in connectedExpanded,
+                                onToggle = { connectedExpanded = connectedExpanded.toggled(device.address) },
+                                state,
+                                actions,
+                                Modifier.bringIntoViewRequester(requester)
+                            )
+                        }
+                    }
+            }
         }
     }
+}
+
+/** Tells [scrolls] that [list]'s page shows this scroll state, for as long as it does. */
+@Composable
+private fun ScrollState.shownBy(list: DeviceList, scrolls: MutableMap<DeviceList, ScrollState>): ScrollState {
+    val scroll = this
+    DisposableEffect(list, scroll) {
+        scrolls[list] = scroll
+        onDispose {
+            if (scrolls[list] === scroll)
+                scrolls.remove(list)
+        }
+    }
+    return scroll
 }
 
 /** A list's cards, as wide as the screen up to a cap, scrolled by [scroll]. */

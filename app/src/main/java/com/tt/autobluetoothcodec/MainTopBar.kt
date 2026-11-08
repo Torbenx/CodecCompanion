@@ -22,7 +22,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarScrollBehavior
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,28 +51,27 @@ internal enum class DeviceList(val label: String, val shortLabel: String) {
 
 /**
  * The main screen's top bar, like Google Calendar's month: the title is the list's name with an arrow, which opens
- * segmented buttons below the bar to switch between the lists. The bar, and the buttons with it, are tinted once the
- * cards scroll under it.
+ * segmented buttons below the bar to switch between the lists. The bar, and the buttons with it, are tinted while the
+ * list in view is [scrolled] under it.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MainTopBar(
     list: DeviceList,
     onList: (DeviceList) -> Unit,
-    scrollBehavior: TopAppBarScrollBehavior,
+    scrolled: Boolean,
     actions: MainScreenActions,
 ) {
     var open by rememberSaveable { mutableStateOf(false) }
+    // Material's defaults for a scrolled and an unscrolled bar
+    val scheme = MaterialTheme.colorScheme
+    val color by animateColorAsState(if (scrolled) scheme.surfaceContainer else scheme.surface, label = "bar")
     Column {
         TopAppBar(
             title = { ListToggle(list, open) { open = !open } },
             actions = { AppMenu(actions::openLog, actions::openAbout) },
-            scrollBehavior = scrollBehavior
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = color, scrolledContainerColor = color)
         )
-        // The bar's colors, Material's defaults for a scrolled and an unscrolled bar
-        val scheme = MaterialTheme.colorScheme
-        val scrolled = scrollBehavior.state.overlappedFraction > 0.01f
-        val color by animateColorAsState(if (scrolled) scheme.surfaceContainer else scheme.surface, label = "lists")
         AnimatedVisibility(open) {
             Surface(color = color) {
                 ListSwitch(list, onList)

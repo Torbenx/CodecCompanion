@@ -1,5 +1,6 @@
 package com.tt.autobluetoothcodec
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -26,7 +27,7 @@ import androidx.compose.ui.unit.dp
 /**
  * A screen with nothing to show: a graphic, a short text and a button offering a way out. The graphic shrinks in short
  * windows, and the whole scrolls if it still doesn't fit, as with a large font in landscape. The padding is inside the
- * scroll container, so the content scrolls behind the navigation bar like the cards do.
+ * scroll container, so the content scrolls behind the navigation bar like the cards do. It scrolls by [scroll].
  */
 @Composable
 internal fun EmptyState(
@@ -36,12 +37,13 @@ internal fun EmptyState(
     onClick: () -> Unit,
     contentPadding: PaddingValues,
     supportingTexts: List<String> = emptyList(),
+    scroll: ScrollState = rememberScrollState(),
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val available = maxHeight - contentPadding.calculateTopPadding() - contentPadding.calculateBottomPadding()
         val artHeight = (available * 0.42f).coerceAtMost(200.dp)
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)
+            Modifier.fillMaxWidth().verticalScroll(scroll).heightIn(min = maxHeight)
                 .padding(contentPadding).padding(horizontal = 24.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
