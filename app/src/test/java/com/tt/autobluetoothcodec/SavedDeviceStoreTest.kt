@@ -26,6 +26,7 @@ class SavedDeviceStoreTest {
     @Before
     fun setUp() {
         setUserUnlocked(true)
+        TestSupport.resetKeys()
         SavedDeviceStore.clearForTest(context)
     }
 

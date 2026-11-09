@@ -282,9 +282,12 @@ class RebootTest(ColdStartBase):
         if app.is_running(self.adb):
             asserts.fail(f"the app's process started after the unlock, which merges the log: {self.process_starts()}")
         asserts.assert_equal(mark, self.log.last_seq(), "the log changed without the app's process")
-        lines = self.log.locked_line_count()
+        lengths = self.log.locked_line_lengths()
+        lines = None if lengths is None else len(lengths)
         # At least the receiver's operation: its trigger, the codec it set and its verification
         asserts.assert_true(lines is not None and lines >= 3, f"the device protected file has {lines} lines")
+        # Encrypted after they're padded to the same length, though the events differ in length
+        asserts.assert_equal(1, len(set(lengths)), f"the device protected file's lines differ in length: {lengths}")
         connected = [d.address for d in bt_oracle.read(self.adb).devices if d.connected]
         asserts.assert_equal([], connected, "a device is connected, the main screen would log its codec")
 

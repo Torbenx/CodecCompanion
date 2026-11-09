@@ -36,10 +36,20 @@ object TestSupport {
         // 0 to be 500 ms in the past, like it is on a phone that has been running for a while
         runFor(60_000)
         setUserUnlocked(true)
+        resetKeys()
         EventLog.resetForTest(context)
         CodecApplier.resetForTest(context, a2dp)
         SavedDeviceStore.clearForTest(context)
         return CodecApplier.get(context)
+    }
+
+    /**
+     * Makes a new key pair for what's written before the unlock, as the app does the first time it runs with the user
+     * unlocked. Each test has its own files, but the keys are kept for the process.
+     */
+    fun resetKeys() {
+        LockedStorageCrypto.deleteKeysForTest(context)
+        LockedStorageCrypto.ensureKeys(context)
     }
 
     /** How long a codec that takes effect at once takes to be verified: two reads, 500 ms apart. */

@@ -3,21 +3,20 @@ package com.tt.autobluetoothcodec
 import android.util.AtomicFile
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
-import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
-import java.io.RandomAccessFile
 
 /**
  * The events and files of the [EventLog], kept on its background thread: every function must be
  * called on that thread, the [EventLog] queues the calls in order. Until [load] reads the user
- * protected file, events are appended to the device protected file. [load] merges them into the
- * log, from then on the events are kept in memory as well and published to [published].
+ * protected file, events are appended to the device protected file, encrypted, see [LockedFile].
+ * [load] merges them into the log, from then on the events are kept in memory as well and
+ * published to [published].
  */
 internal class EventStore(
     private val upsFile: AtomicFile,
-    private val dpsFile: File,
+    private val dpsFile: LockedFile,
     private val published: MutableStateFlow<List<LogEvent>?>,
 ) {
     companion object {
@@ -33,30 +32,11 @@ internal class EventStore(
     // The device protected file is kept until they are, so they survive the process dying first
     private var dpsMergePending = false
 
-    /** Prepares the device protected file, deletes it if logging is disabled. */
+    /** Deletes the device protected file if logging is disabled. */
     fun open(enabled: Boolean) {
-        dpsFile.parentFile?.mkdirs()
         // Left over if the process died before deleting it
         if (!enabled)
             dpsFile.delete()
-        endPartialLine(dpsFile)
-    }
-
-    /** Ends a line left partial by an interrupted append, so the next event starts a line of its own. */
-    private fun endPartialLine(file: File) {
-        if (!file.exists())
-            return
-        try {
-            RandomAccessFile(file, "rw").use {
-                if (it.length() == 0L)
-                    return
-                it.seek(it.length() - 1)
-                if (it.read() != '\n'.code)
-                    it.write('\n'.code)
-            }
-        } catch (e: IOException) {
-            Log.w(TAG, "repairing the device protected log failed", e)
-        }
     }
 
     /**
@@ -85,14 +65,7 @@ internal class EventStore(
         val upsParseDroppedLines = upsEvents.size != upsLines.size
         nextSeq = (upsEvents.maxOfOrNull { it.seq } ?: -1) + 1
 
-        val dpsLines = try {
-            dpsFile.bufferedReader().use { it.readLines() }
-        } catch (e: FileNotFoundException) {
-            emptyList()
-        } catch (e: IOException) {
-            Log.w(TAG, "reading the device protected log failed", e)
-            emptyList()
-        }
+        val dpsLines = dpsFile.read().map { it.decodeToString() }
         val dpsEvents = EventLog.parse(dpsLines).map { it.copy(seq = nextSeq++) }
         // Deleted by the rewrite below once the events are written, which they always cause
         if (dpsEvents.isEmpty())
@@ -130,13 +103,9 @@ internal class EventStore(
     /** Numbers [event] and appends it to the log. */
     fun append(event: LogEvent) {
         val numbered = event.copy(seq = nextSeq++)
-        val line = EventLog.json.encodeToString(numbered) + "\n"
+        val json = EventLog.json.encodeToString(numbered)
         if (!loaded) {
-            try {
-                FileOutputStream(dpsFile, true).use { it.write(line.toByteArray()) }
-            } catch (e: IOException) {
-                Log.w(TAG, "appending to the device protected log file failed", e)
-            }
+            dpsFile.append(json.toByteArray())
             return
         }
 
@@ -148,7 +117,7 @@ internal class EventStore(
         }
         fileLineCount += 1
         try {
-            FileOutputStream(upsFile.baseFile, true).use { it.write(line.toByteArray()) }
+            FileOutputStream(upsFile.baseFile, true).use { it.write((json + "\n").toByteArray()) }
         } catch (e: IOException) {
             Log.w(TAG, "appending to the user protected log file failed", e)
         }

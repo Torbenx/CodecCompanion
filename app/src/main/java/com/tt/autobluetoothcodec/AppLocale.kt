@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.res.Configuration
 import android.content.res.Resources
+import android.os.UserManager
 import androidx.activity.ComponentActivity
 import java.util.IllformedLocaleException
 import java.util.Locale
@@ -48,6 +49,10 @@ class CodecApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         AppLocale.applyDefault()
+        // So the public key is there before the next reboot, whatever started the process. EventLog makes them when
+        // it notices the unlock, for a process started before it
+        if (getSystemService(UserManager::class.java).isUserUnlocked)
+            LockedStorageCrypto.ensureKeys(this)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

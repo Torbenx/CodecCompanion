@@ -36,7 +36,8 @@ import java.util.concurrent.TimeoutException
  * lags behind the events logged until the background thread has handled them. [flush] runs an
  * action once it has.
  *
- * Before the user unlocks the phone after a reboot, events go to a device protected file. The
+ * Before the user unlocks the phone after a reboot, events go to a device protected file, each
+ * encrypted by [LockedStorageCrypto] so only the app can read them once the user unlocked. The
  * unlock broadcast queues the load that merges them into the log, or the next event or read that
  * notices the unlock does, if the broadcast was missed.
  */
@@ -47,6 +48,8 @@ class EventLog private constructor(private val context: Context) {
         // Excluded from backups by backup_rules.xml and data_extraction_rules.xml
         const val DIRECTORY = "logs"
         const val FILE_NAME = "event_log.jsonl"
+        // Binds the device protected file's lines to it, see LockedStorageCrypto.encrypt
+        internal const val LOCKED_CONTEXT_INFO = "event_log"
         private const val PREFERENCES_NAME = "event_log"
         private const val KEY_ENABLED = "enabled"
 
@@ -95,6 +98,8 @@ class EventLog private constructor(private val context: Context) {
                 log.executor.shutdown()
             }
             instance = null
+            // A new process loads the keys again, the public one from device protected storage
+            LockedStorageCrypto.restartForTest()
         }
 
         /**
@@ -107,7 +112,7 @@ class EventLog private constructor(private val context: Context) {
             // Each test has its own context and files
             dpsPreferences = null
             AtomicFile(getFile(context.applicationContext)).delete()
-            getFile(context.createDeviceProtectedStorageContext()).delete()
+            lockedFile(context).delete()
             preferences(context).edit(commit = true) { clear() }
         }
 
@@ -149,6 +154,14 @@ class EventLog private constructor(private val context: Context) {
 
         internal fun getFile(context: Context) = File(File(context.filesDir, DIRECTORY), FILE_NAME)
 
+        /**
+         * The device protected file, encrypted. It keeps at least the newest [MAX_EVENTS] lines, like the log
+         * itself, since the merge keeps no more than those.
+         */
+        internal fun lockedFile(context: Context) = LockedFile(
+            context.applicationContext, getFile(context.createDeviceProtectedStorageContext()), LOCKED_CONTEXT_INFO,
+            MAX_EVENTS)
+
         internal fun toLogcat(event: LogEvent): String {
             return buildString {
                 append(event.type)
@@ -180,7 +193,7 @@ class EventLog private constructor(private val context: Context) {
 
     // Only used on the executor's thread
     private val store = EventStore(
-        AtomicFile(getFile(context)), getFile(context.createDeviceProtectedStorageContext()), mutableEvents)
+        AtomicFile(getFile(context)), lockedFile(context), mutableEvents)
 
     private val mutableEnabled = MutableStateFlow(preferences.getBoolean(KEY_ENABLED, true))
     val enabled: StateFlow<Boolean> = mutableEnabled.asStateFlow()
@@ -214,9 +227,16 @@ class EventLog private constructor(private val context: Context) {
         context.unregisterReceiver(receiver)
     }
 
+    /**
+     * Runs once in each process, when it first notices that the user is unlocked. It's where the app moves what it
+     * wrote before the unlock to credential protected storage: the log, and the info of [SavedDeviceStore].
+     */
     private fun initWithUnlockedUser() {
         userStorageInitialized = true
         unregisterUnlockReceiver()
+        // Before the load needs the private key, and so the public key is there before the next reboot
+        LockedStorageCrypto.ensureKeys(context)
+        SavedDeviceStore.mergeLockedInfo(context)
         val open = HashSet(openOperations)
         val enabled = enabled.value
         executor.execute { store.load(open, enabled) }

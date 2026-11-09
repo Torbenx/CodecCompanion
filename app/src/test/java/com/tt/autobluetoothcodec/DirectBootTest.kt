@@ -10,6 +10,7 @@ import com.tt.autobluetoothcodec.TestSupport.ADDRESS
 import com.tt.autobluetoothcodec.TestSupport.context
 import com.tt.autobluetoothcodec.TestSupport.device
 import com.tt.autobluetoothcodec.TestSupport.flushLog
+import com.tt.autobluetoothcodec.TestSupport.ldac
 import com.tt.autobluetoothcodec.TestSupport.runPending
 import com.tt.autobluetoothcodec.TestSupport.sbc
 import com.tt.autobluetoothcodec.TestSupport.setUserUnlocked
@@ -51,6 +52,7 @@ class DirectBootTest {
         context.applicationInfo.flags = context.applicationInfo.flags or ApplicationInfo.FLAG_DEBUGGABLE
         UnlockingUserManager.checksBeforeUnlock = -1
         setUserUnlocked(true)
+        TestSupport.resetKeys()
         EventLog.resetForTest(context)
         SavedDeviceStore.clearForTest(context)
     }
@@ -59,6 +61,20 @@ class DirectBootTest {
     private fun restartLocked() {
         setUserUnlocked(false)
         EventLog.restartForTest()
+        SavedDeviceStore.restartForTest()
+    }
+
+    /** The events in the device protected file, decrypted. Only once the user unlocked, like in the app. */
+    private fun lockedEvents(): List<LogEvent> {
+        flushLog()
+        return EventLog.parse(EventLog.lockedFile(context).read().map { it.decodeToString() })
+    }
+
+    /** Writes [events] to the device protected file as the app does before the unlock. */
+    private fun writeLocked(vararg events: LogEvent) {
+        val file = EventLog.lockedFile(context)
+        for (event in events)
+            file.append(EventLog.json.encodeToString(event).toByteArray())
     }
 
     private fun lines(file: File): List<String> {
@@ -89,9 +105,97 @@ class DirectBootTest {
         restartLocked()
         log.log(EventType.TEST_LABEL, message = "a")
         log.begin(EventType.A2DP_CONNECTED, LogDevice(ADDRESS))
-        val dpsEvents = EventLog.parse(lines(dpsFile))
-        assertEquals(listOf(EventType.TEST_LABEL, EventType.A2DP_CONNECTED), dpsEvents.map { it.type })
+        assertEquals(2, lines(dpsFile).size)
         assertEquals(before, upsFile.readText())
+        // Decrypting needs the private key, as once the user unlocked
+        setUserUnlocked(true)
+        assertEquals(listOf(EventType.TEST_LABEL, EventType.A2DP_CONNECTED), lockedEvents().map { it.type })
+    }
+
+    @Test
+    fun theLockedEventsAreEncryptedToTheSameLength() {
+        restartLocked()
+        log.log(EventType.TEST_LABEL, message = "a")
+        val operation = log.begin(EventType.A2DP_CONNECTED, LogDevice(ADDRESS, "Qudelix-5K"), LogCodecConfig.of(ldac()))
+        operation.log(EventType.VALIDATE_CODEC_CONFIG, LogCodecConfig.of(ldac()), LogCodecConfig.of(sbc()), attempt = 1)
+        val lines = lines(dpsFile)
+        assertEquals(3, lines.size)
+        assertEquals(1, lines.map { it.length }.toSet().size)
+        for (text in listOf(ADDRESS, "Qudelix", "A2DP_CONNECTED", "TEST_LABEL"))
+            assertFalse(text, dpsFile.readText().contains(text))
+        // Though the events differ in length
+        setUserUnlocked(true)
+        assertEquals(3, lockedEvents().map { EventLog.json.encodeToString(it).length }.toSet().size)
+    }
+
+    @Test
+    fun theDeviceProtectedFileKeepsTheNewestEvents() {
+        restartLocked()
+        repeat(2 * EventLog.MAX_EVENTS + 10) { log.log(EventType.TEST_LABEL, message = "$it") }
+        val count = lines(dpsFile).size
+        assertTrue("$count lines", count in EventLog.MAX_EVENTS until 2 * EventLog.MAX_EVENTS)
+        setUserUnlocked(true)
+        val events = TestSupport.events
+        assertEquals(EventLog.MAX_EVENTS, events.size)
+        assertEquals("${2 * EventLog.MAX_EVENTS + 9}", events.last().message)
+        assertEquals((EventLog.MAX_EVENTS + 10 until 2 * EventLog.MAX_EVENTS + 10).map { "$it" }, events.map { it.message })
+    }
+
+    @Test
+    fun theDeviceProtectedFileKeepsItsLimitAcrossProcesses() {
+        restartLocked()
+        repeat(EventLog.MAX_EVENTS + 10) { log.log(EventType.TEST_LABEL, message = "$it") }
+        // The next process counts the lines already there
+        EventLog.restartForTest()
+        repeat(EventLog.MAX_EVENTS) { log.log(EventType.TEST_LABEL, message = "${EventLog.MAX_EVENTS + 10 + it}") }
+        assertTrue(lines(dpsFile).size < 2 * EventLog.MAX_EVENTS)
+        setUserUnlocked(true)
+        val events = TestSupport.events
+        assertEquals(EventLog.MAX_EVENTS, events.size)
+        assertEquals((EventLog.MAX_EVENTS + 10 until 2 * EventLog.MAX_EVENTS + 10).map { "$it" }, events.map { it.message })
+    }
+
+    @Test
+    fun withoutAPublicKeyTheLockedEventsAreDropped() {
+        // The app never ran with the user unlocked
+        LockedStorageCrypto.deleteKeysForTest(context)
+        restartLocked()
+        log.log(EventType.TEST_LABEL, message = "a")
+        flushLog()
+        assertFalse(dpsFile.exists())
+        setUserUnlocked(true)
+        assertEquals(emptyList<LogEvent>(), TestSupport.events)
+        // The unlock made the keys for the next reboot
+        restartLocked()
+        log.log(EventType.TEST_LABEL, message = "b")
+        setUserUnlocked(true)
+        assertEquals(listOf("b"), TestSupport.events.map { it.message })
+    }
+
+    @Test
+    fun lockedEventsOfALostKeyAreDropped() {
+        restartLocked()
+        log.log(EventType.TEST_LABEL, message = "a")
+        flushLog()
+        // The private key is gone, as after the app's credential protected data was cleared
+        LockedStorageCrypto.deleteKeysForTest(context)
+        log.log(EventType.TEST_LABEL, message = "b")
+        flushLog()
+        setUserUnlocked(true)
+        assertEquals(emptyList<LogEvent>(), TestSupport.events)
+        flushLog()
+        assertFalse(dpsFile.exists())
+    }
+
+    @Test
+    fun aLineOfTheSavedDevicesFileIsntAnEvent() {
+        val event = EventLog.json.encodeToString(event(0, EventType.TEST_LABEL, message = "moved"))
+        val line = LockedStorageCrypto.encrypt(context, event.toByteArray(), "saved_device_info")!!
+        dpsFile.parentFile!!.mkdirs()
+        dpsFile.writeText(line + "\n")
+        restartLocked()
+        setUserUnlocked(true)
+        assertEquals(emptyList<LogEvent>(), TestSupport.events)
     }
 
     @Test
@@ -203,15 +307,14 @@ class DirectBootTest {
 
     @Test
     fun theLockedEventsStayUntilTheMergedLogIsWritten() {
-        dpsFile.parentFile!!.mkdirs()
-        dpsFile.writeText(EventLog.json.encodeToString(event(0, EventType.A2DP_CONNECTED, "op")) + "\n")
+        writeLocked(event(0, EventType.A2DP_CONNECTED, "op"))
         var full = true
         val ups = object : AtomicFile(upsFile) {
             override fun startWrite(): FileOutputStream =
                 if (full) throw IOException("no space left") else super.startWrite()
         }
         val published = MutableStateFlow<List<LogEvent>?>(null)
-        val store = EventStore(ups, dpsFile, published)
+        val store = EventStore(ups, EventLog.lockedFile(context), published)
         // On the background thread in the app, the store itself doesn't care
         store.load(openOperations = setOf("op"), enabled = true)
         assertEquals(listOf("op"), published.value!!.map { it.opUID })
@@ -352,8 +455,7 @@ class DirectBootTest {
         log.setEnabled(false)
         restartLocked()
         // The process died before the background thread deleted it
-        dpsFile.parentFile!!.mkdirs()
-        dpsFile.writeText(EventLog.json.encodeToString(event(0, EventType.TEST_LABEL)) + "\n")
+        writeLocked(event(0, EventType.TEST_LABEL))
         EventLog.restartForTest()
         log.log(EventType.TEST_LABEL, message = "a")
         flushLog()

@@ -41,15 +41,18 @@ def foreground_activity(adb):
     return match.group(1) if match else None
 
 
-def read_preferences(adb, name):
-    """The string values of one of the app's preferences files in device protected storage, by key, or
-    None if its data directory can't be read.
+def read_preferences(adb, name, device_protected=True):
+    """The string values of one of the app's preferences files in device protected storage, or in
+    credential protected storage if not [device_protected], by key, or None if its data directory can't
+    be read. Credential protected storage can only be read once the user unlocked.
 
     The marker tells a missing file, which means no values, from a failed run-as or a wrong
     directory, which would otherwise look the same.
     """
+    # run-as starts in the credential protected directory
+    directory = app.DE_DATA_DIR if device_protected else "."
     out = device_state.shell(
-        adb, f"run-as {app.PACKAGE} sh -c 'cd {app.DE_DATA_DIR} && echo {READABLE}"
+        adb, f"run-as {app.PACKAGE} sh -c 'cd {directory} && echo {READABLE}"
              f" && cat shared_prefs/{name}.xml 2>/dev/null' || true")
     if not out.startswith(READABLE):
         return None
@@ -73,8 +76,11 @@ def preferred_codecs(adb):
 def saved_device_info(adb):
     """What the app keeps of each saved device for the Saved devices list, by upper case address, or None
     if its data directory can't be read. Each is the JSON of SavedDeviceStore.Info: name, lastConnected
-    in ms on the phone's clock, and capabilities, the masks the device offered."""
-    values = read_preferences(adb, "saved_device_info")
+    in ms on the phone's clock, and capabilities, the masks the device offered.
+
+    They're in credential protected storage, the app merges what it noted before the unlock once it
+    notices the unlock."""
+    values = read_preferences(adb, "saved_device_info", device_protected=False)
     return None if values is None else {address: json.loads(value) for address, value in values.items()}
 
 

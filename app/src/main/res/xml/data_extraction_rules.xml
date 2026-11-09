@@ -9,10 +9,22 @@
         <exclude domain="file" path="logs" />
         <!-- Where it's written before the user unlocks the phone after a reboot -->
         <exclude domain="device_file" path="logs" />
+        <!-- The saved devices' info written before that, see SavedDeviceStore -->
+        <exclude domain="device_file" path="saved_devices" />
+        <!-- The keys that encrypt both, see LockedStorageCrypto. A public key without its private key
+             would encrypt what nobody can read -->
+        <exclude domain="sharedpref" path="locked_storage_private_key.xml" />
+        <exclude domain="device_sharedpref" path="locked_storage_public_key.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="logs" />
         <!-- Where it's written before the user unlocks the phone after a reboot -->
         <exclude domain="device_file" path="logs" />
+        <!-- The saved devices' info written before that, see SavedDeviceStore -->
+        <exclude domain="device_file" path="saved_devices" />
+        <!-- The keys that encrypt both, see LockedStorageCrypto. A public key without its private key
+             would encrypt what nobody can read -->
+        <exclude domain="sharedpref" path="locked_storage_private_key.xml" />
+        <exclude domain="device_sharedpref" path="locked_storage_public_key.xml" />
     </device-transfer>
 </data-extraction-rules>

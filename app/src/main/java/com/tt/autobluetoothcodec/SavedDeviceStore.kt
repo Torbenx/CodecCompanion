@@ -11,6 +11,7 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.File
 
 /**
  * The saved devices, keyed by address, in two tiers:
@@ -19,8 +20,10 @@ import kotlinx.serialization.json.Json
  *   unlocks the phone after a reboot, when [A2dpConnectReceiver] and [CodecCompanionService] apply it. It's stored in
  *   the Android representation, so it round trips through [CodecConfig.toAndroid] and [CodecConfig.fromAndroid].
  * - The device's [Info]: its name, when it was last connected and the values it offers, for the Saved devices list.
- *   It can be written at any time but only read once the user unlocked the phone, so it can move to encrypted storage
- *   later. For now it's in device protected storage as well.
+ *   It can be written at any time but only read once the user unlocked the phone, it's in credential protected
+ *   storage. Before the unlock, the changes are appended to a device protected file, each encrypted by
+ *   [LockedStorageCrypto]. The first read or write after the unlock merges them, or [EventLog] when it notices the
+ *   unlock, see [mergeLockedInfo].
  *
  * Only saved devices have info, writes for other devices are ignored, and removing a device removes both tiers.
  */
@@ -28,6 +31,13 @@ object SavedDeviceStore {
     private const val TAG = "SavedDeviceStore"
     private const val PREFERRED_NAME = "preferred_codecs"
     private const val INFO_NAME = "saved_device_info"
+    // Excluded from backups by backup_rules.xml and data_extraction_rules.xml, nobody could decrypt it elsewhere
+    const val LOCKED_DIRECTORY = "saved_devices"
+    const val LOCKED_FILE_NAME = "locked_info_updates"
+    // Binds the device protected file's lines to it, see LockedStorageCrypto.encrypt
+    private const val LOCKED_CONTEXT_INFO = "saved_device_info"
+    // Keeps at least as many of the changes before the unlock, the newest. Each connect and disconnect writes one
+    const val MAX_LOCKED_UPDATES = 1000
 
     // Writes every field, like the format before kotlinx.serialization was used
     internal val json = Json {
@@ -37,6 +47,9 @@ object SavedDeviceStore {
 
     private var preferredPreferences: SharedPreferences? = null
     private var infoPreferences: SharedPreferences? = null
+    private var lockedInfo: LockedFile? = null
+    // Whether this process merged the changes before the unlock, there can't be new ones until the next reboot
+    private var lockedInfoMerged = false
 
     /** What the Saved devices list knows of a device besides its preferred codec, null where it's unknown. */
     @Serializable
@@ -47,6 +60,21 @@ object SavedDeviceStore {
         // The values it offered when it was last read, empty if they never were
         val capabilities: List<A2dpProfileUtil.ConfigMask> = emptyList(),
     )
+
+    /** A change of a device's info before the unlock, the values that are null stay as they are. */
+    @Serializable
+    internal data class InfoUpdate(
+        val address: String,
+        val name: String? = null,
+        val lastConnected: Long? = null,
+        val capabilities: List<A2dpProfileUtil.ConfigMask>? = null,
+    ) {
+        fun applyTo(old: Info) = Info(
+            name = name ?: old.name,
+            lastConnected = lastConnected ?: old.lastConnected,
+            capabilities = capabilities ?: old.capabilities,
+        )
+    }
 
     /** Everything stored for a device, to put it back after it was removed. */
     class Entry internal constructor(internal val preferred: String, internal val info: String?)
@@ -76,20 +104,25 @@ object SavedDeviceStore {
     /** The upper case addresses of the saved devices. */
     fun addresses(context: Context): Set<String> = preferred(context).all.keys
 
-    /** Removes the device with both tiers, returns what was stored to [restore] it, or null if it wasn't saved. */
+    /**
+     * Removes the device with both tiers, returns what was stored to [restore] it, or null if it wasn't saved. Only
+     * once the user unlocked the phone.
+     */
     fun remove(context: Context, device: BluetoothDevice): Entry? {
         val key = key(device)
-        val entry = preferred(context).getString(key, null)?.let { Entry(it, info(context).getString(key, null)) }
+        val info = unlockedInfo(context)
+        val entry = preferred(context).getString(key, null)?.let { Entry(it, info.getString(key, null)) }
         preferred(context).edit { remove(key) }
-        info(context).edit { remove(key) }
+        info.edit { remove(key) }
         return entry
     }
 
-    /** Stores [entry] again, as returned by [remove]. */
+    /** Stores [entry] again, as returned by [remove]. Only once the user unlocked the phone. */
     fun restore(context: Context, device: BluetoothDevice, entry: Entry) {
         val key = key(device)
+        val info = unlockedInfo(context)
         preferred(context).edit { putString(key, entry.preferred) }
-        info(context).edit { if (entry.info != null) putString(key, entry.info) else remove(key) }
+        info.edit { if (entry.info != null) putString(key, entry.info) else remove(key) }
     }
 
     // The info
@@ -108,14 +141,16 @@ object SavedDeviceStore {
         val key = key(device)
         if (!preferred(context).contains(key))
             return
-        val old = readInfo(context, key) ?: Info()
-        val new = old.copy(
-            name = name ?: old.name,
-            lastConnected = lastConnected ?: old.lastConnected,
-            capabilities = capabilities ?: old.capabilities,
-        )
+        val update = InfoUpdate(key, name, lastConnected, capabilities)
+        if (!isUserUnlocked(context)) {
+            appendLocked(context, update)
+            return
+        }
+        val info = unlockedInfo(context)
+        val old = readInfo(info, key) ?: Info()
+        val new = update.applyTo(old)
         if (new != old)
-            info(context).edit { putString(key, json.encodeToString(new)) }
+            info.edit { putString(key, json.encodeToString(new)) }
     }
 
     /** The info of a saved device, null if it isn't saved. Only once the user unlocked the phone. */
@@ -123,17 +158,65 @@ object SavedDeviceStore {
 
     /** The info of the saved device with [address], null if it isn't saved. Only once the user unlocked the phone. */
     fun getInfo(context: Context, address: String): Info? {
-        check(context.getSystemService(UserManager::class.java).isUserUnlocked) {
-            "the saved devices' info can only be read once the user unlocked the phone"
-        }
+        val info = unlockedInfo(context)
         val key = address.uppercase()
         if (!preferred(context).contains(key))
             return null
-        return readInfo(context, key) ?: Info()
+        return readInfo(info, key) ?: Info()
     }
 
-    private fun readInfo(context: Context, key: String): Info? {
-        val text = info(context).getString(key, null) ?: return null
+    /**
+     * Applies the changes written before the user unlocked the phone, in order, then deletes them. Does nothing after
+     * the first time in a process. Only once the user unlocked the phone.
+     */
+    @Synchronized
+    fun mergeLockedInfo(context: Context) {
+        if (lockedInfoMerged)
+            return
+        check(isUserUnlocked(context)) { "the saved devices' info can only be read once the user unlocked the phone" }
+        val file = lockedInfo(context)
+        if (file.exists()) {
+            val info = info(context)
+            val merged = HashMap<String, Info>()
+            for (record in file.read()) {
+                val update = try {
+                    json.decodeFromString<InfoUpdate>(record.decodeToString())
+                } catch (e: SerializationException) {
+                    Log.w(TAG, "invalid change of the info before the unlock", e)
+                    continue
+                } catch (e: IllegalArgumentException) {
+                    Log.w(TAG, "invalid change of the info before the unlock", e)
+                    continue
+                }
+                // Not saved anymore
+                if (!preferred(context).contains(update.address))
+                    continue
+                val old = merged[update.address] ?: readInfo(info, update.address) ?: Info()
+                merged[update.address] = update.applyTo(old)
+            }
+            // Written before the changes are deleted. Applying them again after a crash in between gives the same info,
+            // since nothing writes the info before they're merged
+            if (merged.isNotEmpty())
+                info.edit(commit = true) { merged.forEach { (key, value) -> putString(key, json.encodeToString(value)) } }
+            file.delete()
+        }
+        lockedInfoMerged = true
+    }
+
+    @Synchronized
+    private fun appendLocked(context: Context, update: InfoUpdate) {
+        lockedInfo(context).append(json.encodeToString(update).toByteArray())
+    }
+
+    /** The info's preferences once the changes before the unlock are merged. */
+    private fun unlockedInfo(context: Context): SharedPreferences {
+        check(isUserUnlocked(context)) { "the saved devices' info can only be read once the user unlocked the phone" }
+        mergeLockedInfo(context)
+        return info(context)
+    }
+
+    private fun readInfo(info: SharedPreferences, key: String): Info? {
+        val text = info.getString(key, null) ?: return null
         return try {
             json.decodeFromString<Info>(text)
         } catch (e: SerializationException) {
@@ -148,18 +231,39 @@ object SavedDeviceStore {
         // Each test has its own context and files
         preferredPreferences = null
         infoPreferences = null
+        lockedInfo = null
+        lockedInfoMerged = false
         preferred(context).edit(commit = true) { clear() }
         info(context).edit(commit = true) { clear() }
+        lockedInfo(context).delete()
     }
 
+    /** Forgets that the changes before the unlock were merged, as if the process restarted, for tests. */
+    @VisibleForTesting
+    fun restartForTest() {
+        lockedInfo = null
+        lockedInfoMerged = false
+    }
+
+    private fun isUserUnlocked(context: Context) = context.getSystemService(UserManager::class.java).isUserUnlocked
+
     private fun preferred(context: Context): SharedPreferences =
-        preferredPreferences ?: open(context, PREFERRED_NAME).also { preferredPreferences = it }
+        preferredPreferences ?: context.applicationContext.createDeviceProtectedStorageContext()
+            .getSharedPreferences(PREFERRED_NAME, Context.MODE_PRIVATE)
+            .also { preferredPreferences = it }
 
+    // In credential protected storage, which can't be opened before the user unlocked the phone
     private fun info(context: Context): SharedPreferences =
-        infoPreferences ?: open(context, INFO_NAME).also { infoPreferences = it }
+        infoPreferences ?: context.applicationContext.getSharedPreferences(INFO_NAME, Context.MODE_PRIVATE)
+            .also { infoPreferences = it }
 
-    private fun open(context: Context, name: String): SharedPreferences =
-        context.applicationContext.createDeviceProtectedStorageContext().getSharedPreferences(name, Context.MODE_PRIVATE)
+    internal fun lockedFile(context: Context) =
+        File(File(context.applicationContext.createDeviceProtectedStorageContext().filesDir, LOCKED_DIRECTORY),
+            LOCKED_FILE_NAME)
+
+    private fun lockedInfo(context: Context): LockedFile =
+        lockedInfo ?: LockedFile(context.applicationContext, lockedFile(context), LOCKED_CONTEXT_INFO, MAX_LOCKED_UPDATES)
+            .also { lockedInfo = it }
 
     private fun key(device: BluetoothDevice) = device.address.uppercase()
 }

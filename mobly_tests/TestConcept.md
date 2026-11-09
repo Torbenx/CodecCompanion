@@ -287,7 +287,7 @@ levels and fakes that a phone can't provide.
 | K6 | `CompanionPresence` and `PermissionUtil` on SDK 28, 31, 32, 33, 34, 36, with and without the companion feature: observing by address and by id since 33 and nothing before, `syncAll` repairs, the receiver enabled on every level and the service since 33, `isAssociationRequired(ForAutoApply)`, on 31–32 a link only while the app has none and isn't exempt from auto revoke, address case | P1 |
 | K7 | `EventLog`: structure violations throw in debuggable builds, append and rewrite at 2 × `MAX_EVENTS`, repair with `OPERATION_INTERRUPTED` on load, `clear` keeps open operations, `flush` order, partial lines; disabling deletes the log, stays disabled after a restart and keeps operations that span it out of the log; loading on the background thread: `events` is null until loaded, events logged meanwhile follow the loaded ones, numbered on, `clear` and disabling meanwhile apply to the loaded events, `awaitWritten` waits for the thread | P1 |
 | K8 | `SavedDeviceStore`: invalid JSON reads as none, address case; only saved devices have info, updating it keeps the values not given, removing a device removes both tiers and restoring puts them back; before the unlock the info can be written but not read | P2 |
-| K9 | Direct boot: while the user is locked the log appends to its device protected file and can't be read; unlocking merges those events after the old ones, numbered on, also when reading notices the unlock, also across locked restarts; the unlock broadcast merges them without another event or read, its receiver is only registered while locked and unregistered once the load is queued; the device protected file stays until the merged log is written; operations left open by an earlier process are interrupted, those of this process continue; trimming and partial lines; disabled logging and the preferred codecs are known while locked; an unlock between the first check and the registration of the receiver, which misses the broadcast, is noticed by the second check | P1 |
+| K9 | Direct boot: while the user is locked the log appends to its device protected file and can't be read; unlocking merges those events after the old ones, numbered on, also when reading notices the unlock, also across locked restarts; the unlock broadcast merges them without another event or read, its receiver is only registered while locked and unregistered once the load is queued; the device protected file stays until the merged log is written; operations left open by an earlier process are interrupted, those of this process continue; trimming and partial lines; disabled logging and the preferred codecs are known while locked; an unlock between the first check and the registration of the receiver, which misses the broadcast, is noticed by the second check. What is written while locked is encrypted with the public key from device protected storage and padded to the same length (`LockedStorageCrypto`): only the private key in credential protected storage decrypts it, and only with the same context info; the keys are made when a process starts with the user unlocked or notices the unlock, a missing public key is written again and a lost private key replaces it; without a public key, or with a lost private key, the locked records are dropped; the device protected files keep the newest `MAX_EVENTS` records, also across processes; the saved devices' info is in credential protected storage, written while locked to an encrypted device protected file and merged in order at the unlock, by the log or the first read or write; neither key nor the locked files are backed up (`LockedStorageTest`) | P1 |
 | K10 | The main screen's observed codecs, with Robolectric's A2DP proxy for the screen and the fake for the applier, reporting the same codec: the first codec read in a process is logged once, opening the screen again logs nothing, a new process logs it again; a codec the applier read, verified or not, isn't logged; a changed codec is logged once, changing back too, and a change while the screen is stopped once it's started again; the codecs the applier's request goes through aren't logged | P2 |
 
 The main screen's own logic stays in `MainActivity` (D1, D13), with its own
@@ -405,7 +405,8 @@ keeps the presence events it holds back in memory, and queues an
 appearance for a BLE device lost while locked, which would start the
 process at the unlock. After the unlock no process may start for 15 s, the log stays
 unchanged and the device protected file still has the locked events. Its
-lines will be encrypted, so only its line count is checked. Opening the
+lines are encrypted, so only their count and that they're all the same
+length are checked. Opening the
 main screen with no device connected then merges that many events, dated
 before the unlock, the receiver's operation resolved `CODEC_VERIFIED`, and
 deletes the file. If a process starts at the unlock, the failure names
@@ -414,8 +415,9 @@ why, from `am_proc_start`.
 Before the first unlock the app's credential protected storage is
 encrypted. The manifest receiver and the companion service are direct boot
 aware, so the system starts them anyway; the preferred codecs are in device
-protected storage, and the log keeps its events in a device protected file
-until the unlock merges them (K9). Per API level, from the AOSP sources and
+protected storage, and the log keeps its events and the saved devices' info
+its changes in device protected files, encrypted, until the unlock merges
+them (K9). Per API level, from the AOSP sources and
 the runs on the testbed:
 
 | API | Before the unlock | At the unlock | C14 | C15 | C16 |
