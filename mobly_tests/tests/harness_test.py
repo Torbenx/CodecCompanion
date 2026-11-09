@@ -16,7 +16,7 @@ from mobly import records
 from mobly import signals
 
 import run_suite
-from lib import app, app_log, baseline, bt_oracle, companion, device_state, device_test, lock_screen, sim_helper
+from lib import app, app_log, baseline, bt_oracle, companion, device_state, device_test, hibernation, lock_screen, sim_helper
 
 MOBLY_TESTS = pathlib.Path(__file__).resolve().parents[1]
 TESTDATA = MOBLY_TESTS / "testdata"
@@ -309,6 +309,64 @@ class AutoRevokeTest(unittest.TestCase):
 
     def test_api28HasNoSuchOp(self):
         self.assertIsNone(app.parse_auto_revoke_mode("Error: Unknown operation string: AUTO_REVOKE_PERMISSIONS_IF_UNUSED\n"))
+        self.assertIsNone(app.parse_auto_revoke_modes("Error: Unknown operation string: AUTO_REVOKE_PERMISSIONS_IF_UNUSED\n"))
+
+    def test_bothModes(self):
+        allow = "Uid mode: AUTO_REVOKE_PERMISSIONS_IF_UNUSED: allow\nAUTO_REVOKE_PERMISSIONS_IF_UNUSED: ignore\n"
+        self.assertEqual(("allow", "ignore"), app.parse_auto_revoke_modes(allow))
+        self.assertEqual((None, "ignore"), app.parse_auto_revoke_modes("AUTO_REVOKE_PERMISSIONS_IF_UNUSED: ignore\n"))
+        self.assertEqual((None, "default"), app.parse_auto_revoke_modes("No operations.\nDefault mode: default\n"))
+
+
+class HibernationTest(unittest.TestCase):
+    """hibernation.py's parsers, against outputs of state_command() and dumpsys jobscheduler."""
+
+    def test_baselineOnApi32(self):
+        state = hibernation.parse_state(read("hibernation", "state_api32.txt"))
+        self.assertEqual(hibernation.UnusedAppState(None, "ignore", 7776000000, None, False, False), state)
+        self.assertEqual([], baseline.unused_app_problems(state))
+
+    def test_api30HasNoHibernationAndStoresNoThreshold(self):
+        state = hibernation.parse_state(read("hibernation", "state_api30.txt"))
+        self.assertEqual(hibernation.UnusedAppState(None, "ignore", None, None, None, None), state)
+        self.assertEqual([], baseline.unused_app_problems(state))
+
+    def test_leftoverOfAnUnfinishedTest(self):
+        state = hibernation.parse_state(read("hibernation", "state_api32_leftover.txt"))
+        self.assertEqual(hibernation.UnusedAppState("allow", "ignore", 5000, "7776000000", True, True), state)
+        self.assertEqual(5, len(baseline.unused_app_problems(state)))
+
+    def test_freshInstall(self):
+        state = hibernation.parse_state("No operations.\nDefault mode: default\n#threshold\nnull\n#marker\nabsent\n"
+                                        "#hibernation\nfalse\nfalse\n")
+        self.assertEqual(["not exempt from removing the permissions of the unused app, its mode is default"],
+                         baseline.unused_app_problems(state))
+
+    def test_threshold(self):
+        self.assertIsNone(hibernation.parse_threshold("null\n"))
+        self.assertEqual(5000, hibernation.parse_threshold("5000\n"))
+        with self.assertRaises(ValueError):
+            hibernation.parse_threshold("Error\n")
+
+    def test_hibernated(self):
+        self.assertTrue(hibernation.parse_hibernated("true\n"))
+        self.assertFalse(hibernation.parse_hibernated("false"))
+        with self.assertRaises(ValueError):
+            hibernation.parse_hibernated("cmd: Can't find service: app_hibernation")
+
+    def test_job(self):
+        lines = read("hibernation", "jobscheduler.txt").splitlines()
+        self.assertEqual(("com.google.android.permissioncontroller", 2), hibernation.parse_job(lines[0]))
+        self.assertEqual(("com.google.android.permissioncontroller", 2), hibernation.parse_job(lines[2]))
+        self.assertIsNone(hibernation.parse_job("  JOB #u0a194/0: 6809e9f com.google.android.permissioncontroller/"
+                                                "com.android.permissioncontroller.permission.service.LocationAccessCheck"
+                                                "$LocationAccessCheckJobService"))
+
+    def test_jobRun(self):
+        self.assertEqual((True, True), hibernation.parse_job_run("Running job [FORCED]\nactive\nactive ready\nwaiting\n"))
+        self.assertEqual((True, False), hibernation.parse_job_run("Running job [FORCED]\nactive\nactive\n"))
+        self.assertEqual((False, True), hibernation.parse_job_run("Running job [FORCED]\nwaiting\nwaiting\n"))
+        self.assertEqual((False, False), hibernation.parse_job_run(""))
 
 
 class ResolveActivityTest(unittest.TestCase):

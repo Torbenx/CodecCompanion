@@ -1,0 +1,9 @@
+Uid mode: AUTO_REVOKE_PERMISSIONS_IF_UNUSED: allow
+AUTO_REVOKE_PERMISSIONS_IF_UNUSED: ignore
+#threshold
+5000
+#marker
+7776000000
+#hibernation
+true
+true

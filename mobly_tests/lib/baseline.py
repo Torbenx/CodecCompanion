@@ -3,7 +3,8 @@
 A user who has set the app up and listens with the headset, but hasn't saved
 a preferred codec: log empty, settings at their defaults, package not
 stopped, permission granted without flags, headset linked and not observed,
-phone Bluetooth on, A2DP connected, headset normal, the codec the phone picks
+exempt from what the system does to unused apps and not hibernated, the
+unused app job's threshold untouched (D28), phone Bluetooth on, A2DP connected, headset normal, the codec the phone picks
 on its own (D11), screen on and unlocked with the launcher in front.
 
 check() reads every part, repair() puts back what differs, and restore() does
@@ -23,6 +24,7 @@ from lib import app_log
 from lib import bt_oracle
 from lib import companion
 from lib import device_state
+from lib import hibernation
 
 # Flags a user's choice leaves on the permission, the reset clears them
 USER_FLAGS = {"USER_SET", "USER_FIXED"}
@@ -82,6 +84,24 @@ def saved_device_info(adb):
     notices the unlock."""
     values = read_preferences(adb, "saved_device_info", device_protected=False)
     return None if values is None else {address: json.loads(value) for address, value in values.items()}
+
+
+def unused_app_problems(state):
+    """How [state], a hibernation.UnusedAppState, differs from the baseline."""
+    problems = []
+    if state.uid_mode is not None:
+        problems.append(f"the user's choice {state.uid_mode} for removing the permissions of the unused app")
+    if state.package_mode != "ignore":
+        problems.append(f"not exempt from removing the permissions of the unused app, its mode is {state.package_mode}")
+    if state.marker is not None:
+        problems.append("a test's isolation of the unused app job wasn't cleaned up")
+    if state.threshold is not None and state.threshold < hibernation.SAFE_THRESHOLD_MS:
+        problems.append(f"the unused app job's threshold is {state.threshold} ms")
+    if state.hibernated:
+        problems.append("hibernated")
+    if state.globally_hibernated:
+        problems.append("globally hibernated")
+    return problems
 
 
 def element_bounds(xml, text):
@@ -177,6 +197,8 @@ class Baseline:
                 problems.append("permission not granted")
             if flags & USER_FLAGS:
                 problems.append(f"permission flags {sorted(flags & USER_FLAGS)}")
+        if self.sdk >= 30:
+            problems += unused_app_problems(hibernation.read_state(adb, self.sdk))
         if not companion.is_linked(adb, app.PACKAGE, self.headset.address):
             problems.append("headset not linked")
         elif companion.is_observing(adb, app.PACKAGE, self.headset.address):
@@ -209,6 +231,12 @@ class Baseline:
         For a caller that checks the baseline next anyway, like the next test's setup.
         """
         adb = self.adb
+        unused = hibernation.read_state(adb, self.sdk) if self.sdk >= 30 else None
+        if unused is not None and unused.marker is not None:
+            # A test's isolation of the unused app job didn't finish, every other app is still exempt
+            hibernation.clean_up(adb)
+        elif unused is not None and unused.threshold is not None and unused.threshold < hibernation.SAFE_THRESHOLD_MS:
+            hibernation.set_threshold(adb, None)
         # Relinking first ends observing; any event it causes is deleted with the app data next.
         # API 31 and 32 don't show observing, but the app doesn't observe there.
         linked = companion.is_linked(adb, app.PACKAGE, self.headset.address)
@@ -225,6 +253,8 @@ class Baseline:
         if not companion.is_linked(adb, app.PACKAGE, self.headset.address):
             companion.link(adb, app.PACKAGE, self.headset.address)
         app.grant_permission(adb)
+        if unused is not None:
+            self.repair_unused_app()
         if app.is_stopped(adb):
             app.unstop(adb)
         if not self.headset.is_normal():
@@ -236,6 +266,18 @@ class Baseline:
             bt_oracle.wait_connected(adb, self.headset.address, timeout=CONNECT_TIMEOUT)
         if (foreground_activity(adb) or "").startswith(app.PACKAGE + "/"):
             app.go_home(adb)
+
+    def repair_unused_app(self):
+        """Exempts the app from what the system does to unused apps, as the link does, without the user's choice,
+        and ends its hibernation. After the relink, which sets the package mode on its own where it relinked."""
+        adb, state = self.adb, hibernation.read_state(self.adb, self.sdk)
+        if state.uid_mode is not None:
+            app.set_auto_revoke_uid_mode(adb, "default")
+        if state.package_mode != "ignore":
+            app.set_auto_revoke_package_mode(adb, "ignore")
+        # Hibernation stops the package, ending it doesn't take the package out of the stopped state
+        if state.hibernated or state.globally_hibernated:
+            hibernation.set_hibernated(adb, False)
 
     def record_own_codec(self):
         """Records the codec the phone picks on a full reconnect while the app has no preferred codec."""

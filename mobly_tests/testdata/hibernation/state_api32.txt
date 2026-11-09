@@ -1,0 +1,8 @@
+AUTO_REVOKE_PERMISSIONS_IF_UNUSED: ignore
+#threshold
+7776000000
+#marker
+absent
+#hibernation
+false
+false

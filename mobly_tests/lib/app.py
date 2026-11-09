@@ -56,6 +56,11 @@ def install(adb, apk=APK):
     adb.install(["-r", "-t", str(apk)], timeout=INSTALL_TIMEOUT)
 
 
+def uninstall(adb):
+    """Removes the app, its data, its links and its appops, so the next install is a fresh one."""
+    device_state.shell(adb, f"pm uninstall {PACKAGE}", timeout=60)
+
+
 def is_stopped(adb):
     """Whether the package is in the stopped state, in which manifest receivers get nothing."""
     out = device_state.shell(adb, f"dumpsys package {PACKAGE} | grep -m1 -o 'stopped=[a-z]*' || true")
@@ -150,25 +155,53 @@ def clear_data(adb):
 AUTO_REVOKE_OP = "AUTO_REVOKE_PERMISSIONS_IF_UNUSED"
 
 
-def parse_auto_revoke_mode(output):
-    """The mode of AUTO_REVOKE_PERMISSIONS_IF_UNUSED that applies, from `appops get PACKAGE OP`.
+def parse_auto_revoke_modes(output):
+    """(uid mode, package mode) of AUTO_REVOKE_PERMISSIONS_IF_UNUSED, from `appops get PACKAGE OP`.
 
-    A "Uid mode" line is the user's choice in the app's settings and wins over
-    the package's mode, which a link sets to ignore. "default" when neither is
-    set, None where the op doesn't exist (API 28).
+    The uid mode is the user's choice in the app's settings, None if there is
+    none; the system's switch "Remove permissions and free up space" writes
+    allow. The package mode is "default" unless set; a link sets it to ignore.
+    None where the op doesn't exist (API 28).
     """
     if "Unknown operation" in output:
         return None
     uid = re.search(rf"^Uid mode: {AUTO_REVOKE_OP}: (\w+)", output, re.MULTILINE)
-    if uid:
-        return uid.group(1)
     package = re.search(rf"^{AUTO_REVOKE_OP}: (\w+)", output, re.MULTILINE)
-    return package.group(1) if package else "default"
+    return uid.group(1) if uid else None, package.group(1) if package else "default"
+
+
+def parse_auto_revoke_mode(output):
+    """The mode of AUTO_REVOKE_PERMISSIONS_IF_UNUSED that applies, from `appops get PACKAGE OP`.
+
+    A uid mode wins over the package's mode. "default" when neither is set,
+    None where the op doesn't exist (API 28).
+    """
+    modes = parse_auto_revoke_modes(output)
+    if modes is None:
+        return None
+    uid, package = modes
+    return uid if uid is not None else package
 
 
 def auto_revoke_mode(adb):
     """"ignore" while the app is exempt from losing its permissions when unused, see parse_auto_revoke_mode."""
     return parse_auto_revoke_mode(device_state.shell(adb, f"appops get {PACKAGE} {AUTO_REVOKE_OP}"))
+
+
+def auto_revoke_modes(adb):
+    """(uid mode, package mode), see parse_auto_revoke_modes."""
+    return parse_auto_revoke_modes(device_state.shell(adb, f"appops get {PACKAGE} {AUTO_REVOKE_OP}"))
+
+
+def set_auto_revoke_uid_mode(adb, mode):
+    """Sets the uid mode like the user's switch in the app's settings: allow when it's turned on, default
+    removes the choice."""
+    device_state.shell(adb, f"appops set --uid {PACKAGE} {AUTO_REVOKE_OP} {mode}")
+
+
+def set_auto_revoke_package_mode(adb, mode):
+    """Sets the package mode, which a link sets to ignore."""
+    device_state.shell(adb, f"appops set {PACKAGE} {AUTO_REVOKE_OP} {mode}")
 
 
 def reset_auto_revoke(adb):

@@ -2,7 +2,7 @@
 
 How Auto Bluetooth Codec is tested: which test levels exist, what each one
 covers, which information and control channels they use, what the harness
-needs, and in which order it's built. The decisions behind it, D1 to D27, are
+needs, and in which order it's built. The decisions behind it, D1 to D28, are
 listed in [section 13](#13-decisions) and referenced where they matter.
 
 Two manual test records, `tools/codec-applier-tests.md` and
@@ -93,6 +93,7 @@ with the phone's lock screen is a capability:
 | A lock screen the suite can unlock | A pure test device or a known password | C14, C15, C16: the phone is rebooted with a secure lock screen and unlocked by typing its PIN or password | all |
 | End the app's process like the system | `run-as … kill` on API 28 and 36; on API 32 and the A50's API 30 SELinux doesn't let `run-as` signal it (toybox says "unknown pid"), so it needs root there, or `am kill` once the process is cached | C1, C3, C4; C4 kills a busy process, so not the A50 | all but C4 on the A50 |
 | LDAC | The codec capabilities of phone and headset, at run time | B3 | all, with the Qudelix |
+| Change every app's settings | A pure test device | J13: the unused app job's threshold is the whole phone's, so the test exempts every other app and afterwards removes every app's choice (D28) | the API 32 Pixel |
 
 ### Code paths per API level
 
@@ -137,6 +138,7 @@ has no A2DP sink with real codecs.
 | App snippet | Apply a codec through `CodecApplier`, set a codec bypassing it (like another app would), set or delete preferred codecs (setting notes the device's info like the app's Save), sync presence, reset the app's state | Not in background or cold start tests |
 | adb, Bluetooth | The phone's adapter on and off (`svc bluetooth`, with su where there is root; without root up to API 30 a broadcast to the snippet's `BluetoothSwitch`, which holds BLUETOOTH_ADMIN, since Samsung's API 30 refuses the shell) | See [device_state.py](mobly_tests/lib/device_state.py). A2DP alone can't be switched from adb: `cmd bluetooth_manager` on API 36 only offers the adapter and its BLE mode (D14) |
 | adb, app lifecycle | Install, update, clear data, kill the process, grant and revoke the permission, launch activities | Revoking a permission kills the process |
+| adb, unused apps | `cmd app_hibernation get-state/set-state [--global]` (31+); the job's threshold `device_config permissions auto_revoke_unused_threshold_millis2`; `cmd jobscheduler run -f` of the permission controller's `HibernationJobService`; `appops set [--uid] … AUTO_REVOKE_PERMISSIONS_IF_UNUSED` | See [hibernation.py](mobly_tests/lib/hibernation.py) and D28. The threshold is the whole phone's, so the job only runs on a pure test device |
 | adb, companion | `cmd companiondevice associate/disassociate` (checked on 28 and 32, to check on 36) | Links a device without the system dialog (D9) |
 | Headset | Depends on the backend, see [6.3](#63-headsets). Qudelix: `bt-off` (device disappears), `no-a2dp` (A2DP down, link and BLE stay), `normal`, `reboot` | `no-a2dp` gives the state "present but A2DP not connected" that cold start tests need |
 | Developer options | Change the codec like a user would | Only by UI; the snippet's direct set is the faster equivalent |
@@ -457,6 +459,8 @@ check that the parts work together, not every detail on the way.
 | J10 | A saved device in the Saved devices list: connected, its card has the Connected chip and View device opens its expanded card in the Connected list; away, the banner says when it last connected, in English on any phone (the S24 runs in German), and its chips change the preferred codec; the next connect applies the new one | all | P1 |
 | J11 | Delete a saved device that isn't connected and undo it: its preferred codec, its info and, on 33+, observing come back; deleted again without undo, nothing is stored or observed and the Saved list is empty | all | P2 |
 | J12 | Empty states with the headset off: with Bluetooth off the screen is asleep, Turn on Bluetooth and the system's dialog turn it on; without devices Open Bluetooth settings opens them; back in the app, the headset switched on shows its card. Needs the power switch | all | P2 |
+| J13 | The system's job for unused apps, forced with a 5 s threshold while every other app is exempt (D28): it hibernates the fresh install, which was never linked, and takes its permission (`AUTO_REVOKED`); opening the app ends both hibernations and shows the permission dialog; the first link, asked for when saving SBC as each API level asks for it, exempts the app, so the job leaves it alone and a reconnect applies SBC; with the exemption turned off in the app's settings (uid mode `allow`) the job hibernates it again, the link stays, and after a reconnect whether SBC is applied and whether the app is still hibernated is recorded (`UNUSED_APPLIED`, 6.7): on 31–32 not applied and still hibernated, on 37 not applied but no longer hibernated | 31+, a pure test device | P2 |
+| J14 | J13 with the job's result put on the app alone (`pm revoke`, `cmd app_hibernation set-state`), so it runs on every phone: what hibernation means for the app and how it gets back, not whether the system exempts it. Where J13 runs too, both record the same for the reconnect while hibernated | 31+ | P2 |
 
 ## 5. Where journeys are worth it
 
@@ -528,6 +532,7 @@ hasn't saved a preferred codec:
 | Package | Not stopped, so manifest receivers get broadcasts | `dumpsys package` | A broadcast to `TestLabelReceiver` without a label |
 | Nearby devices permission (31+) | Granted, not marked user-set or user-fixed | `dumpsys package` | `pm grant` after the reset, which clears the flags |
 | Link | The headset is linked on every phone, also where the app doesn't need it; nothing is observed | `cmd companiondevice list`; observing from `dumpsys companiondevice` on 33+. API 31–32 show observing nowhere, not even in the system's file | `cmd companiondevice disassociate` and `associate`, which also ends observing. The app doesn't observe on 31–32 (D27) |
+| Unused app (30+) | Exempt by the link's package mode `ignore`, without the user's uid mode; not hibernated (31+); the job's threshold the phone's own, no marker of an unfinished isolation (D28) | One shell call: `appops get`, `device_config get`, the marker, `cmd app_hibernation get-state [--global]` | With a marker, the threshold from it and every app's uid mode removed; a short threshold deleted; the app's uid mode `default` and package mode `ignore`; `set-state false`, which leaves the package stopped |
 | Phone Bluetooth | On; every other phone on adb off | `device_state` | `device_state.set_bluetooth` |
 | A2DP | The headset is connected and the active device | `bt_oracle` | The connect fixture, [6.6](#66-connecting-the-headset) |
 | Headset | Its normal state (Qudelix: `normal`) | The backend | The backend |
@@ -556,7 +561,8 @@ Not part of the baseline:
   repair fails, the rest of the class is aborted instead of failing every test
   for the same reason (D12).
 - The order of a restore matters: app data first, so the reconnect doesn't
-  apply a preferred codec; then permission, link and package; then the phone's
+  apply a preferred codec; then permission, link, the unused app's state and
+  package; then the phone's
   Bluetooth, the headset and A2DP; then the codec; the screen last.
 
 **Resetting the app data.** `pm clear` resets everything the app stores,
@@ -969,6 +975,10 @@ needs the ones before it unless it says otherwise.
     pass on all three phones.
 15. **P3**; screenshot tests (V12) after the UI polish (D5); the release smoke
     test once R8 is enabled.
+16. **Unused apps** (D28): the spike, `hibernation.py`, the baseline's unused
+    app state, J13 and J14 (done). Both pass on the API 32 Pixel, J14 on
+    the S24, where J13 is not applicable, and both are not applicable on
+    API 28 and 30.
 
 ## 11. Existing manual tests
 
@@ -1212,8 +1222,56 @@ Checked on 2026-10-27, while writing this concept and in the spike (step 1):
   LDAC in the selectable capabilities while LDAC is off in the headset's
   settings (its recording in `testdata`), so that setting doesn't make a
   codec one the device no longer offers.
+- The spike for J13 and J14 (D28), on 2026-11-09. API 28 has neither
+  `device_config` nor `cmd app_hibernation`, and the op doesn't exist. The
+  A50 has the job but no hibernation service, and stores no threshold
+  (`null`); the API 32 Pixel and the S24 store `7776000000` (90 days) and
+  have `app_hibernation_enabled=true`. On all three the job is
+  `com.google.android.permissioncontroller` job 2, `HibernationJobService`,
+  and with the baseline's link the app's mode is `ignore`, also on API 37.
+  On the API 32 Pixel, with every other app exempted by its uid mode (13 s
+  for 248 packages), the threshold at 5 s, a 10 s wait and the job forced:
+  the fresh install, never linked, was hibernated for the user and globally
+  within 1 s, `stopped=true`, the permission not granted with
+  `AUTO_REVOKED` added and `USER_SET` cleared, and no other app was
+  hibernated. Opening the app ended both hibernations and the stopped state
+  and showed the permission dialog, not the settings hint. Linked, the job
+  listed the app among the unused ones and skipped it without a log line.
+  The switch "Remove permissions and free up space" in the app's settings
+  writes the uid mode `allow` and keeps the link's package mode `ignore`;
+  with it the job hibernated the linked app again, and the link stayed. The
+  job always exempts packages that aren't on the launcher ("Package is not
+  on launcher" in its log), the snippet among them. `appops query-op`
+  doesn't list uid modes, so the cleanup sets every app's uid mode, about
+  14 s. On the A50 the job counted the app unused, took nothing and didn't
+  stop it. `cmd app_hibernation set-state` force-stops the package on API 32
+  and 37, and `set-state false` leaves it stopped. No shell command sets
+  `AUTO_REVOKED`; API 37's `pm set-permission-flags` offers review-required,
+  revoked-compat, revoke-when-requested, user-fixed and user-set, and API 32
+  has no `set-permission-flags` or `clear-permission-flags` at all. With
+  `pm revoke` and `set-state` the app came back on API 32 and 37 like after
+  the real job.
+- The first runs of J13 and J14 on the API 32 Pixel: passed, about 2 min and
+  1 min. Each forced job ran in under a second, and after J13 no app had a
+  uid mode, none was hibernated and the threshold was back. With the
+  exemption turned off and the app hibernated, the reconnect applied
+  nothing, no process started, and the package stayed stopped and
+  hibernated. A J13 left unfinished on purpose (marker, 5 s threshold,
+  every other app exempt, the app hibernated with the uid mode `allow`) was
+  repaired by the next class setup, whose check then passed.
+- The first runs of J14 on the S24 (API 37): passed. With the exemption
+  turned off and the app hibernated, the reconnect started the app's
+  process: the device appearing woke the companion service, the log has
+  `DEVICE_APPEARED`, and starting the process ended the hibernation and
+  the stopped state. Without the permission nothing tried to apply the
+  codec, so no operation was logged, and the codec stayed the phone's own.
+  So the app is back from hibernation without being opened, but it applies
+  nothing until the user opens it and grants the permission again.
+  `UNUSED_APPLIED` records (applied, still hibernated): (False, True) for
+  31–32, (False, False) from 37; 33–36 have no phone on the testbed.
 - Recordings of `dumpsys bluetooth_manager` (status and A2DP sections) and of
-  the companion device outputs from every phone are in `mobly_tests/testdata`.
+  the companion device outputs from every phone are in `mobly_tests/testdata`,
+  and those of the unused app's state in `testdata/hibernation`.
 
 ## 13. Decisions
 
@@ -1334,3 +1392,22 @@ Checked on 2026-10-27, while writing this concept and in the spike (step 1):
   turned the exemption off in the app's settings, and linking again wouldn't
   change it. API 30 has auto revoke too, but the app has no runtime
   permission there.
+- **D28** What the system does to an unused app is tested twice. The job
+  that takes an unused app's permissions and, since API 31, hibernates it
+  can be forced from the shell, but only with a threshold that is the whole
+  phone's, so J13 runs it only on a pure test device. Before the job it
+  exempts every other app by its uid mode and leaves a marker on the phone
+  that holds the original threshold; afterwards it puts the threshold back
+  and removes the uid mode of every app, the users' choices included, so an
+  error can't leave an exemption behind. The baseline repairs a marker that
+  is still there. No other package serves as a control that the job ran: it
+  always exempts packages without a launcher icon, like the snippet, and
+  naming a launcher app would name a phone (D7). Instead the run that must
+  leave the linked app alone sits between two runs of the same recipe that
+  hit it, and the job's state is polled until it was active. J14 runs the
+  same journey on every phone with the job's result put on the app alone,
+  which can't set `AUTO_REVOKED` and on API 32 keeps `USER_SET`; the app
+  only reads the permission request's result, so neither matters to it, and
+  J13 asserts the real flags itself. API 30 is left out: the job takes no
+  permission there, since the app has no runtime permission, and doesn't
+  hibernate, which the spike confirmed on the A50.

@@ -17,10 +17,13 @@ from lib import bt_oracle
 from lib import companion
 from lib import device_state
 from lib import headset
+from lib import hibernation
+from lib import lock_screen
 from lib import screens
 from lib.bt_oracle import Codec
 from lib.bt_oracle import same_format
 from lib.device_test import BaselineTest
+from lib.device_test import recorded
 
 SNIPPET = "snippet"
 SBC_44_16 = Codec(bt_oracle.SBC, 0x1, 0x1)
@@ -39,6 +42,15 @@ BLUETOOTH_ON_TIMEOUT = 20.0
 NO_DEVICES_TIMEOUT = datetime.timedelta(seconds=30)
 # The headset switched on reconnects to the phone it served last, this one
 HEADSET_ON_TIMEOUT = datetime.timedelta(seconds=60)
+# J13, J14: how long a hibernated app has to apply the preferred codec after the headset connected
+UNUSED_SETTLE = 10.0
+
+# Characterization (D8), recorded per range of API levels (6.7), see device_test.recorded().
+# J13, J14: (whether the preferred codec is applied, whether the app is still hibernated) once the headset
+# connected while the app was hibernated, linked and without the permission. On 31 and 32 the package stays
+# stopped, and the companion service is disabled (D27). On 37 the device appearing starts the app's process,
+# which ends the hibernation and the stopped state, but without the permission nothing applies the codec.
+UNUSED_APPLIED = {(31, 32): (False, True), (37, None): (False, False)}
 
 
 def chips(codec):
@@ -183,6 +195,143 @@ class JourneyTest(BaselineTest):
         asserts.assert_equal("PREFERRED_SAVED", op.resolution, str(op))
         asserts.assert_false(op.of_type("ASSOCIATION_REQUESTED"), f"saving asked for the link again: {op}")
         asserts.assert_false(companion.is_linked(self.adb, app.PACKAGE, self.address), "the device was linked again")
+
+    def test_j13_an_unused_app_and_the_systems_job(self):
+        """The system's job for unused apps, forced: it hibernates the fresh install and takes its permission,
+        opening the app brings it back, the first link exempts it, so the job leaves it alone and the preferred codec
+        is applied. With the exemption turned off in the app's settings the job hibernates it again (D28)."""
+        self.require(self.sdk >= 31, "the system hibernates unused apps since API 31")
+        self.require(self.lock_class == lock_screen.PURE_TEST_DEVICE,
+                     "the job's threshold is the whole phone's, so the job only runs on a pure test device (D28)")
+        self.unused_app_journey(real=True)
+
+    def test_j14_an_unused_app_simulated(self):
+        """J13 with the unused app's state put on the app alone instead of the system's job, on every phone: what
+        it means for the app and how it gets back, not whether the system exempts it (D28)."""
+        self.require(self.sdk >= 31, "the system hibernates unused apps since API 31")
+        self.unused_app_journey(real=False)
+
+    def unused_app_journey(self, real):
+        """J13 with the system's job if [real], else J14."""
+        try:
+            # A fresh install was never linked, so nothing exempts it
+            app.uninstall(self.adb)
+            app.install(self.adb)
+            asserts.assert_equal((None, "default"), app.auto_revoke_modes(self.adb), "the fresh install is exempt")
+            asserts.assert_false(companion.is_linked(self.adb, app.PACKAGE, self.address), "the fresh install is linked")
+            app.launch(self.adb)
+            screen = screens.MainScreen(self.ad, self.headset)
+            screen.answer_permission(allow=True)
+            screen.wait_for_card()
+            if real:
+                hibernation.isolate(self.adb, keep=[app.PACKAGE])
+
+            self.make_unused(real, "the fresh install")
+            self.check_unused(real, "the fresh install")
+
+            # Opening the app ends its hibernation, and it asks for the permission again
+            app.launch(self.adb)
+            screen = screens.MainScreen(self.ad, self.headset)
+            asserts.assert_false(hibernation.is_hibernated(self.adb), "opening the app didn't end its hibernation")
+            asserts.assert_false(hibernation.is_hibernated(self.adb, globally=True),
+                                 "opening the app didn't end its global hibernation")
+            asserts.assert_false(app.is_stopped(self.adb), "the opened app's package is stopped")
+            screen.answer_permission(allow=True)
+            screen.wait_for_card()
+
+            self.link_and_save(screen)
+            asserts.assert_true(companion.is_linked(self.adb, app.PACKAGE, self.address), "the device isn't linked")
+            asserts.assert_equal((None, "ignore"), app.auto_revoke_modes(self.adb), "the link didn't exempt the app")
+            if real:
+                self.make_unused(real, "the linked app")
+                asserts.assert_false(hibernation.is_hibernated(self.adb), "the job hibernated the linked app")
+                asserts.assert_false(hibernation.is_hibernated(self.adb, globally=True),
+                                     "the job hibernated the linked app globally")
+                asserts.assert_false(app.is_stopped(self.adb), "the job stopped the linked app")
+                asserts.assert_true(app.permission_state(self.adb)[0], "the job took the linked app's permission")
+            else:
+                app.go_home(self.adb)
+                app.kill(self.adb)
+            mark = self.log.last_seq()
+            self.headset.reconnect(self.adb)
+            self.wait_for_applied(mark, SBC_44_16)
+
+            # The user turns on "Remove permissions and free up space" in the app's settings, which writes this
+            app.set_auto_revoke_uid_mode(self.adb, "allow")
+            self.make_unused(real, "the app with the exemption turned off")
+            self.check_unused(real, "the app with the exemption turned off")
+            asserts.assert_true(companion.is_linked(self.adb, app.PACKAGE, self.address), "the link is gone")
+            mark = self.log.last_seq()
+            self.headset.reconnect(self.adb)
+            bt_oracle.wait_connected(self.adb, self.address, timeout=baseline.CONNECT_TIMEOUT)
+            time.sleep(UNUSED_SETTLE)
+            dumped = bt_oracle.active_codec(self.adb, self.address)
+            outcome = (same_format(dumped, SBC_44_16), hibernation.is_hibernated(self.adb))
+            events = self.log.events_after(mark)
+            ops = app_log.operations(events)
+            self.ad.log.info("hibernated on API %d: (applied, still hibernated) %s, process running %s, stopped %s, "
+                             "permission %s, codec %s, events %s: %s", self.sdk, outcome, app.is_running(self.adb),
+                             app.is_stopped(self.adb), app.permission_state(self.adb), dumped,
+                             [e["type"] for e in events], "; ".join(map(str, ops)))
+            expected = recorded(UNUSED_APPLIED, self.sdk)
+            if expected is None:
+                asserts.explicit_pass(f"recorded: (applied, still hibernated) {outcome}; "
+                                      f"add it to UNUSED_APPLIED for API {self.sdk}")
+            asserts.assert_equal(expected, outcome,
+                                 f"(applied, still hibernated) after the reconnect: {'; '.join(map(str, ops))}")
+        finally:
+            if real:
+                hibernation.clean_up(self.adb)
+
+    def make_unused(self, real, what):
+        """[what] isn't used any more and the system's job runs, or with [real] false its result is put on the app."""
+        app.go_home(self.adb)
+        app.kill(self.adb)
+        if not real:
+            hibernation.simulate(self.adb)
+            return
+        hibernation.wait()
+        since = device_state.shell(self.adb, "date +'%m-%d %H:%M:%S.000'")
+        ran = hibernation.run_job(self.adb)
+        self.ad.log.info("the job about %s: %s", what, hibernation.job_log(self.adb, since) or "nothing")
+        asserts.assert_true(ran, f"the job didn't run for {what}")
+
+    def check_unused(self, real, what):
+        """[what] is in the state the job leaves an app in that isn't exempt."""
+        asserts.assert_true(hibernation.is_hibernated(self.adb), f"{what} isn't hibernated")
+        asserts.assert_true(hibernation.is_hibernated(self.adb, globally=True), f"{what} isn't hibernated globally")
+        asserts.assert_true(app.is_stopped(self.adb), f"the package of {what} isn't stopped")
+        asserts.assert_false(app.is_running(self.adb), f"{what} runs")
+        granted, flags = app.permission_state(self.adb)
+        asserts.assert_false(granted, f"{what} still has the permission")
+        if real:
+            # The shell can't set these, simulate() leaves them out
+            asserts.assert_true("AUTO_REVOKED" in flags and "USER_SET" not in flags,
+                                f"the permission's flags for {what}: {sorted(flags)}")
+
+    def link_and_save(self, screen):
+        """Links the device the first time, the way each API level asks for it, and saves SBC as preferred."""
+        if self.sdk >= 36:
+            # An unlinked device's codec is unreadable, so its card asks for the link first (J6)
+            asserts.assert_true(screen.shows_link_prompt(), "the card doesn't ask for the link")
+            mark = self.log.last_seq()
+            screen.tap_link()
+            screen.accept_link_dialog()
+            op = self.log.wait_for_operation(after=mark, trigger="USER_LINK_DEVICE", device=self.address, timeout=30)
+            asserts.assert_equal("ASSOCIATION_CREATED", op.resolution, str(op))
+        # On 34 and 35 changing the codec asks for the link, before saving does (J3)
+        self.choose(screen, "SBC", SBC_44_16, link=34 <= self.sdk < 36)
+        mark = self.log.last_seq()
+        asserts.assert_equal("none", screen.preferred_status(), "the banner before saving")
+        screen.tap_save()
+        # On 31 and 32 because the app isn't exempt and has no link, on 33 because the device has none
+        if self.sdk < 34:
+            screen.accept_link_dialog()
+        op = self.log.wait_for_operation(after=mark, trigger="USER_SAVE_PREFERRED", device=self.address, timeout=30)
+        asserts.assert_equal("PREFERRED_SAVED", op.resolution, str(op))
+        if self.sdk < 34:
+            asserts.assert_true(op.of_type("ASSOCIATION_REQUESTED"), f"saving didn't ask for the link: {op}")
+        self.assert_preferred_active(screen, "after saving")
 
     def test_j1_first_start(self):
         """First start: the permission is granted in the system's dialog, and the card shows the codec

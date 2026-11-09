@@ -320,7 +320,7 @@ class ColdStartTest(ColdStartBase):
     def test_c9_fresh_install(self):
         """Characterization: installed and never launched, the device connects. The app has nothing to
         apply and isn't started. Whether the install is in the stopped state is recorded."""
-        device_state.shell(self.adb, f"pm uninstall {app.PACKAGE}", timeout=60)
+        app.uninstall(self.adb)
         app.install(self.adb)
         stopped = app.is_stopped(self.adb)
         self.headset.reconnect(self.adb)
