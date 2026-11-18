@@ -9,7 +9,7 @@
     <application>
         <meta-data
             android:name="mobly-snippets"
-            android:value="com.tt.autobluetoothcodec.snippet.AppSnippet" />
+            android:value="com.tt.codeccompanion.snippet.AppSnippet" />
 
         <!-- Only the shell and the system hold DUMP -->
         <receiver

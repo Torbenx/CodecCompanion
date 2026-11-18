@@ -80,11 +80,11 @@ class BtOracleTest(unittest.TestCase):
 
     def test_broadcastResult(self):
         self.assertEqual(1, device_state.parse_broadcast_result(
-            "Broadcasting: Intent { flg=0x400000 cmp=com.tt.autobluetoothcodec.snippet/.BluetoothSwitch (has extras) }\n"
+            "Broadcasting: Intent { flg=0x400000 cmp=com.tt.codeccompanion.snippet/.BluetoothSwitch (has extras) }\n"
             "Broadcast completed: result=1"))
         # What nothing receiving it looks like
         self.assertEqual(0, device_state.parse_broadcast_result(
-            "Broadcasting: Intent { flg=0x400000 cmp=com.tt.autobluetoothcodec.snippet/.BluetoothSwitch (has extras) }\n"
+            "Broadcasting: Intent { flg=0x400000 cmp=com.tt.codeccompanion.snippet/.BluetoothSwitch (has extras) }\n"
             "Broadcast completed: result=0"))
         self.assertEqual(2, device_state.parse_broadcast_result("Broadcast completed: result=2, data=\"no Bluetooth adapter\""))
         self.assertIsNone(device_state.parse_broadcast_result("Security exception: Permission Denial: ..."))
@@ -284,16 +284,16 @@ class AppLogTest(unittest.TestCase):
 class InstrumentationTest(unittest.TestCase):
     def test_results(self):
         self.assertEqual((38, 0, []), app.parse_instrumentation("INSTRUMENTATION_RESULT: stream=\n\nOK (38 tests)\n"))
-        output = ("INSTRUMENTATION_STATUS: class=com.tt.autobluetoothcodec.MainScreenTest\n"
+        output = ("INSTRUMENTATION_STATUS: class=com.tt.codeccompanion.MainScreenTest\n"
                   "INSTRUMENTATION_STATUS: test=noCodecInformation\n"
                   "INSTRUMENTATION_STATUS_CODE: -2\n"
                   "Tests run: 38,  Failures: 1\n")
-        self.assertEqual((38, 1, ["com.tt.autobluetoothcodec.MainScreenTest#noCodecInformation"]),
+        self.assertEqual((38, 1, ["com.tt.codeccompanion.MainScreenTest#noCodecInformation"]),
                          app.parse_instrumentation(output))
 
 
 class AutoRevokeTest(unittest.TestCase):
-    """`appops get com.tt.autobluetoothcodec AUTO_REVOKE_PERMISSIONS_IF_UNUSED`, on API 32 unless noted."""
+    """`appops get com.tt.codeccompanion AUTO_REVOKE_PERMISSIONS_IF_UNUSED`, on API 32 unless noted."""
 
     def test_linked(self):
         self.assertEqual("ignore", app.parse_auto_revoke_mode("AUTO_REVOKE_PERMISSIONS_IF_UNUSED: ignore\n"))

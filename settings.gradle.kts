@@ -19,7 +19,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Auto Bluetooth Codec"
+rootProject.name = "Codec Companion"
 include(":app")
 include(":snippet")
  

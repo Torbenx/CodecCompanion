@@ -14,7 +14,7 @@ import time
 
 from lib import device_state
 
-PACKAGE = "com.tt.autobluetoothcodec"
+PACKAGE = "com.tt.codeccompanion"
 SNIPPET_PACKAGE = PACKAGE + ".snippet"
 TEST_PACKAGE = PACKAGE + ".test"
 PERMISSION = "android.permission.BLUETOOTH_CONNECT"

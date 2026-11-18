@@ -1,6 +1,6 @@
 # Test concept
 
-How Auto Bluetooth Codec is tested: which test levels exist, what each one
+How Codec Companion is tested: which test levels exist, what each one
 covers, which information and control channels they use, what the harness
 needs, and in which order it's built. The decisions behind it, D1 to D28, are
 listed in [section 13](#13-decisions) and referenced where they matter.
@@ -825,7 +825,7 @@ setup:
    through the class loader, which works on the JVM and in the test APK.
 6. **Running on a phone.** `run_suite.py` installs the app and the test APK
    (`installDebug installDebugAndroidTest`) and runs
-   `am instrument -w -r com.tt.autobluetoothcodec.test/androidx.test.runner.AndroidJUnitRunner`
+   `am instrument -w -r com.tt.codeccompanion.test/androidx.test.runner.AndroidJUnitRunner`
    on the phone under test. Not `connectedDebugAndroidTest`: it runs on all
    phones at once and uninstalls the app afterwards, which drops its links.
    `am instrument` force-stops the app, so the baseline restore runs after the
@@ -856,8 +856,8 @@ stores and the log (D3). A separate module gives it that:
 - `testInstrumentationRunner = "com.google.android.mobly.snippet.SnippetRunner"`,
   the dependency `com.google.android.mobly:mobly-snippet-lib`, the snippet
   classes in the manifest's `mobly-snippets` meta-data, application id
-  `com.tt.autobluetoothcodec.snippet`. Mobly loads it with
-  `ad.load_snippet("app", "com.tt.autobluetoothcodec.snippet")`.
+  `com.tt.codeccompanion.snippet`. Mobly loads it with
+  `ad.load_snippet("app", "com.tt.codeccompanion.snippet")`.
 - It reaches the app's public declarations. Kotlin's `internal` is visible to
   the app's own test source sets, not to another module. Everything the RPCs
   need is public today (`CodecApplier.apply`, `cancel` and `pending`,

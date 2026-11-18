@@ -25,7 +25,7 @@ ABSENT = "ABSENT"
 
 # TelephonyManager.prepareForUnattendedReboot, the A50's API 30 has no such method
 UNATTENDED_REBOOT_SDK = 31
-HELPER_CLASS = "com.tt.autobluetoothcodec.snippet.UnattendedReboot"
+HELPER_CLASS = "com.tt.codeccompanion.snippet.UnattendedReboot"
 # TelephonyManager.PREPARE_UNATTENDED_REBOOT_*
 PREPARE_RESULTS = {0: "success", 1: "a SIM's PIN isn't stored, enter it once by hand", 2: "error"}
 

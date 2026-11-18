@@ -1,1 +1,1 @@
-com.tt.autobluetoothcodec 0A:1B:2C:3D:4E:5F
+com.tt.codeccompanion 0A:1B:2C:3D:4E:5F

@@ -18,10 +18,10 @@ import time
 
 from lib import device_state
 
-PACKAGE = "com.tt.autobluetoothcodec"
+PACKAGE = "com.tt.codeccompanion"
 LOG_FILE = "files/logs/event_log.jsonl"
 LOG_EVENT_KT = (pathlib.Path(__file__).resolve().parents[2]
-                / "app/src/main/java/com/tt/autobluetoothcodec/LogEvent.kt")
+                / "app/src/main/java/com/tt/codeccompanion/LogEvent.kt")
 
 
 def read_event_flows():

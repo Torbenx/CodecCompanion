@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "com.tt.autobluetoothcodec.snippet"
+    namespace = "com.tt.codeccompanion.snippet"
     compileSdk = 36
     targetProjectPath = ":app"
 

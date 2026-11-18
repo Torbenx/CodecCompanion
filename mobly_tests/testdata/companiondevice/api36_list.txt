@@ -1,3 +1,3 @@
 Max ID: 7
 Association ID | Package Name | Mac Address
-7 | com.tt.autobluetoothcodec | 0a:1b:2c:3d:4e:5f
+7 | com.tt.codeccompanion | 0a:1b:2c:3d:4e:5f

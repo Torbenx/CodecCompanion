@@ -13,7 +13,7 @@ import time
 STAY_ON_ALL_CHARGERS = "7"
 
 # The snippet's receiver that switches Bluetooth where the shell isn't allowed to, and up to which API it can
-BLUETOOTH_SWITCH = "com.tt.autobluetoothcodec.snippet/.BluetoothSwitch"
+BLUETOOTH_SWITCH = "com.tt.codeccompanion.snippet/.BluetoothSwitch"
 BLUETOOTH_SWITCH_MAX_SDK = 30
 
 

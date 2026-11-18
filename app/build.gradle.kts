@@ -21,11 +21,11 @@ fun gitDescription(): String {
 }
 
 android {
-    namespace = "com.tt.autobluetoothcodec"
+    namespace = "com.tt.codeccompanion"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.tt.autobluetoothcodec"
+        applicationId = "com.tt.codeccompanion"
         minSdk = 28
         targetSdk = 36
         versionCode = 1

@@ -13,8 +13,8 @@ misses one or breaks the operation structure (trigger, elements, resolution).
 Load it on a phone with a debug build installed:
   python tools/sample_event_log.py --now-ms <phone time> --utc-offset <phone offset> -o sample.jsonl
   adb push sample.jsonl /data/local/tmp/sample.jsonl
-  adb shell am force-stop com.tt.autobluetoothcodec
-  adb shell run-as com.tt.autobluetoothcodec sh -c "'mkdir -p files/logs && cat /data/local/tmp/sample.jsonl > files/logs/event_log.jsonl'"
+  adb shell am force-stop com.tt.codeccompanion
+  adb shell run-as com.tt.codeccompanion sh -c "'mkdir -p files/logs && cat /data/local/tmp/sample.jsonl > files/logs/event_log.jsonl'"
 """
 
 import argparse
